@@ -1,0 +1,6 @@
+interface:
+  display_name: "Manuscript Revision Closure"
+  short_description: "Decide when academic manuscript revision should stop"
+  default_prompt: "Use $manuscript-revision-closure to decide whether this complete academic manuscript should stop general AI revision and return only a concise closure verdict."
+policy:
+  allow_implicit_invocation: true
