@@ -98,6 +98,9 @@ class ReleaseDocumentationTests(unittest.TestCase):
             if (
                 not path.is_file()
                 or ".git" in path.parts
+                or ".venv" in path.parts
+                or ".build" in path.parts
+                or "release" in path.parts
                 or "__pycache__" in path.parts
                 or "配图" in path.parts
                 or path.resolve() == Path(__file__).resolve()

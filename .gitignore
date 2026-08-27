@@ -8,3 +8,9 @@ Thumbs.db
 .idea/
 .vscode/
 /配图/
+.venv/
+.build/
+release/
+*.spec
+__pycache__/
+*.py[cod]

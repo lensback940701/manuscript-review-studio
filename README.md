@@ -93,6 +93,39 @@ On Windows, the usual location is:
 
 Restart or refresh Codex after installation. No third-party Python dependency is required by the runtime helper.
 
+## Standalone Windows application
+
+The repository also contains an experimental standalone runtime that can apply
+the same read-only closure contract through the DeepSeek, Kimi, or Gemini API without a
+Codex installation. Double-clicking the executable opens a localhost GUI with
+an optional contract-bounded Chinese interpretation, assessment basis and dimensions,
+brief limitations, pre-submission checklist, and an actual-usage cost estimate from
+official pricing sources.
+API keys are read only from environment variables. See
+[`STANDALONE.zh-CN.md`](STANDALONE.zh-CN.md) for usage, build instructions, and
+security boundaries. The standalone and Skill versions are managed separately;
+this does not change the Skill's `0.2.1` contract version.
+
+Standalone 0.6.1 is a bounded multi-stage runner with a visible multi-model selector and model-specific
+reasoning controls. Unsupported provider/model/reasoning combinations fail
+before an API request instead of being silently ignored.
+Core assessment and optional interpretation requests use structured output.
+Gemini and Kimi requests additionally carry an exact JSON Schema, while
+the local validator accepts only one complete object with the exact eleven-key
+contract. Usage from a contract-invalid interpretation response remains included
+in the cost estimate. The former 5,000-token application cap was replaced with
+provider-scale headroom (DeepSeek 384K, Kimi 128K, Gemini 64K) and explicit
+length-truncation detection.
+Kimi and DeepSeek are priced natively in CNY, Gemini in USD, with dated ECB
+USD/CNY reference-rate conversion for dual-currency display.
+Core assessment now uses two bound calls: a ten-dimension whole-manuscript
+coverage pass and an independent full-text root-cause adjudication pass. A local
+contradiction gate verifies the canonical coverage SHA-256, candidate accounting,
+hold preservation, and protected invariants before the deterministic reducer runs.
+Kimi uses a 300-second coverage window and 900-second adjudication and interpretation
+windows. Read/socket timeouts are not automatically resent; only explicit HTTP
+429, 502, 503, and 504 responses receive bounded retries.
+
 ## Invocation
 
 Example:
