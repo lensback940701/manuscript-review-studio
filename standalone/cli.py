@@ -60,7 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override every stage timeout in seconds; otherwise provider/stage defaults are used",
     )
-    parser.add_argument("--transient-retries", type=int, choices=(0, 1, 2), default=2)
+    parser.add_argument(
+        "--transient-retries",
+        type=int,
+        choices=(0,),
+        default=0,
+        help="Compatibility flag; 0 is the only accepted value because full requests are never auto-retried",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     return parser
 

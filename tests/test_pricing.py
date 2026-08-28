@@ -132,9 +132,15 @@ class PricingTests(unittest.TestCase):
             note="测试",
         )
         result = calculate_task_cost(quote, [{}])
-        self.assertEqual("usage_unavailable", result["status"])
-        self.assertIsNone(result["total_estimated_cost"])
+        self.assertEqual(
+            "estimated_known_usage_subtotal_with_unknown_potential_charge",
+            result["status"],
+        )
+        self.assertEqual(0.0, result["known_usage_estimated_subtotal"])
+        self.assertEqual(1, result["unknown_potential_charge_attempt_count"])
         self.assertFalse(result["calls"][0]["usage_complete"])
+        self.assertEqual("UNKNOWN_POTENTIAL_CHARGE", result["calls"][0]["billing_status"])
+        self.assertIsNone(result["calls"][0]["prompt_tokens"])
 
 
 if __name__ == "__main__":

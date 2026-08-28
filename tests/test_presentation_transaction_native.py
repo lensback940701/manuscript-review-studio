@@ -273,7 +273,7 @@ class NativePresentationTransactionTests(unittest.TestCase):
             )
         self.assertEqual(1, mocked.call_count)
         self.assertEqual("HOLD", result.status)
-        self.assertEqual("REJECTED", result.provider_outcome)
+        self.assertEqual("UNKNOWN", result.provider_outcome)
         self.assertEqual(1, result.attempts)
 
     def test_06_presentation_timeout_is_not_retried(self) -> None:
@@ -610,14 +610,14 @@ class NativePresentationTransactionTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, serialized)
 
-    def test_33_version_is_062_and_skill_remains_021(self) -> None:
-        self.assertEqual("0.6.2", standalone.__version__)
+    def test_33_version_is_063_and_skill_remains_021(self) -> None:
+        self.assertEqual("0.6.3", standalone.__version__)
         result, _messages, _clients, _calls = self._run_analysis(
             self._core_completions(CHINESE_MACHINE_STATE),
             machine_state=CHINESE_MACHINE_STATE,
         )
         runtime = result.as_dict()["runtime"]
-        self.assertEqual("0.6.2", runtime["standalone_version"])
+        self.assertEqual("0.6.3", runtime["standalone_version"])
         self.assertEqual("0.2.1", runtime["skill_version"])
 
     def test_machine_hash_parity_is_exact_after_successful_repair(self) -> None:

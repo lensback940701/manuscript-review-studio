@@ -492,6 +492,8 @@ def calculate_task_cost(
     total_usd = 0.0
     total_cny = 0.0
     all_usage_complete = True
+    unknown_potential_charge_attempts = 0
+    priced_usage_receipts = 0
     for index, usage in enumerate(usages, start=1):
         prompt_raw = usage.get("prompt_tokens")
         output_raw = usage.get("completion_tokens")
@@ -504,17 +506,24 @@ def calculate_task_cost(
             and output_raw >= 0
         )
         all_usage_complete = all_usage_complete and usage_complete
-        prompt = prompt_raw if isinstance(prompt_raw, int) and prompt_raw >= 0 else 0
-        output = output_raw if isinstance(output_raw, int) and output_raw >= 0 else 0
-        hit = int(usage.get("prompt_cache_hit_tokens", usage.get("cached_tokens", 0)) or 0)
+        if not usage_complete:
+            unknown_potential_charge_attempts += 1
+        prompt = prompt_raw if usage_complete else None
+        output = output_raw if usage_complete else None
+        hit = int(usage.get("prompt_cache_hit_tokens", usage.get("cached_tokens", 0)) or 0) if usage_complete else None
         explicit_miss = usage.get("prompt_cache_miss_tokens")
-        miss = int(explicit_miss) if isinstance(explicit_miss, int) and explicit_miss >= 0 else max(0, prompt - hit)
-        if hit < 0 or miss < 0 or hit + miss > prompt:
+        miss = (
+            int(explicit_miss)
+            if usage_complete and isinstance(explicit_miss, int) and explicit_miss >= 0
+            else max(0, prompt - hit) if usage_complete and prompt is not None and hit is not None else None
+        )
+        if usage_complete and (hit < 0 or miss < 0 or hit + miss > prompt):
             hit, miss = 0, prompt
         cost: float | None = None
         cost_usd: float | None = None
         cost_cny: float | None = None
         if quote is not None and usage_complete:
+            priced_usage_receipts += 1
             hit_rate = quote.input_cache_hit_per_million
             if hit_rate is None:
                 miss += hit
@@ -541,8 +550,11 @@ def calculate_task_cost(
                 "cache_hit_tokens": hit,
                 "cache_miss_tokens": miss,
                 "completion_tokens": output,
-                "reasoning_tokens_reported": int(usage.get("reasoning_tokens", 0) or 0),
+                "reasoning_tokens_reported": (
+                    int(usage.get("reasoning_tokens", 0) or 0) if usage_complete else None
+                ),
                 "usage_complete": usage_complete,
+                "billing_status": "KNOWN_USAGE" if usage_complete else "UNKNOWN_POTENTIAL_CHARGE",
                 "estimated_cost": round(cost, 8) if cost is not None else None,
                 "estimated_cost_usd": round(cost_usd, 8) if cost_usd is not None else None,
                 "estimated_cost_cny": round(cost_cny, 8) if cost_cny is not None else None,
@@ -552,7 +564,7 @@ def calculate_task_cost(
     if quote is None:
         status = "price_unavailable"
     elif not all_usage_complete:
-        status = "usage_unavailable"
+        status = "estimated_known_usage_subtotal_with_unknown_potential_charge"
     limitations = [
         "按 API usage 返回的 token 与官方标准付费层单价估算，不是平台最终账单。",
         "免费层、税费、赠送余额、账户折扣、缓存细则及服务层级可能改变实际扣费。",
@@ -565,18 +577,22 @@ def calculate_task_cost(
         "status": status,
         "pricing": quote.as_dict() if quote is not None else None,
         "calls": calls,
-        "total_estimated_cost": round(total_cost, 8) if quote is not None and all_usage_complete else None,
+        "total_estimated_cost": round(total_cost, 8) if quote is not None else None,
+        "known_usage_estimated_subtotal": round(total_cost, 8) if quote is not None else None,
         "total_estimated_cost_usd": (
             round(total_usd, 8)
-            if quote is not None and all_usage_complete and (quote.currency == "USD" or exchange_rate is not None)
+            if quote is not None and (quote.currency == "USD" or exchange_rate is not None)
             else None
         ),
         "total_estimated_cost_cny": (
             round(total_cny, 8)
-            if quote is not None and all_usage_complete and (quote.currency == "CNY" or exchange_rate is not None)
+            if quote is not None and (quote.currency == "CNY" or exchange_rate is not None)
             else None
         ),
         "currency": quote.currency if quote is not None else None,
         "exchange_rate": exchange_rate.as_dict() if exchange_rate is not None else None,
+        "physical_request_attempt_count": len(calls),
+        "usage_receipt_count": priced_usage_receipts,
+        "unknown_potential_charge_attempt_count": unknown_potential_charge_attempts,
         "billing_limitations": limitations,
     }

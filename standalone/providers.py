@@ -8,7 +8,9 @@ import socket
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from . import __version__
@@ -19,6 +21,10 @@ class ProviderConfigurationError(ValueError):
 
 class ProviderRequestError(RuntimeError):
     """Raised when a provider request cannot produce one usable response."""
+
+    def __init__(self, message: str, *, request_receipts: tuple[dict[str, Any], ...] = ()) -> None:
+        super().__init__(message)
+        self.request_receipts = tuple(dict(item) for item in request_receipts)
 
 
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180.0
@@ -43,6 +49,7 @@ _STAGE_TIMEOUT_SECONDS: dict[str, dict[str, float]] = {
     },
 }
 _RETRYABLE_HTTP_STATUSES = frozenset({429, 502, 503, 504})
+PROVIDER_REQUEST_TRANSACTION_VERSION = "mrc-provider-request-transaction-1.0"
 
 
 def provider_stage_timeout_seconds(
@@ -77,6 +84,13 @@ class ProviderSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderCapability:
+    supports_strict_json_schema: bool
+    supports_json_object_mode: bool
+    schema_delivery_mode: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderConfig:
     name: str
     model: str
@@ -91,6 +105,7 @@ class CompletionResult:
     model: str
     usage: dict[str, int]
     finish_reason: str | None = None
+    request_receipts: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +157,52 @@ PROVIDERS = {
         ),
     ),
 }
+
+
+PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
+    "deepseek": ProviderCapability(
+        supports_strict_json_schema=False,
+        supports_json_object_mode=True,
+        schema_delivery_mode="prompt_canonical_schema_plus_json_object",
+    ),
+    "kimi": ProviderCapability(
+        supports_strict_json_schema=True,
+        supports_json_object_mode=True,
+        schema_delivery_mode="prompt_canonical_schema_plus_api_strict_json_schema",
+    ),
+    "gemini": ProviderCapability(
+        supports_strict_json_schema=True,
+        supports_json_object_mode=True,
+        schema_delivery_mode="prompt_canonical_schema_plus_api_strict_json_schema",
+    ),
+}
+
+
+def provider_capability(provider: str) -> dict[str, Any]:
+    name = provider.casefold().strip()
+    try:
+        capability = PROVIDER_CAPABILITIES[name]
+    except KeyError as exc:
+        raise ProviderConfigurationError("provider capability requires one registered provider") from exc
+    return {
+        "supports_strict_json_schema": capability.supports_strict_json_schema,
+        "supports_json_object_mode": capability.supports_json_object_mode,
+        "schema_delivery_mode": capability.schema_delivery_mode,
+    }
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_retry_after(headers: Any) -> str | None:
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:
+        value = None
+    if not isinstance(value, str):
+        return None
+    return " ".join(value.split())[:120] or None
 
 
 def _option(value: str, label: str) -> ReasoningOption:
@@ -369,20 +430,20 @@ def list_provider_models(provider: str, *, timeout_seconds: float = 15.0) -> lis
 
 
 class ChatCompletionClient:
-    """One-call classifier client with bounded transient retries and no repair loop."""
+    """One-call client whose logical request is exactly one physical HTTP attempt."""
 
     def __init__(
         self,
         config: ProviderConfig,
         *,
         timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
-        max_transient_retries: int = 2,
+        max_transient_retries: int = 0,
         on_attempt: Callable[[int], None] | None = None,
     ) -> None:
         if timeout_seconds <= 0:
             raise ProviderConfigurationError("timeout must be positive")
-        if max_transient_retries not in {0, 1, 2}:
-            raise ProviderConfigurationError("transient retries must be between zero and two")
+        if max_transient_retries != 0:
+            raise ProviderConfigurationError("automatic full-request retries are disabled; max_transient_retries must be zero")
         self.config = config
         self.timeout_seconds = timeout_seconds
         self.max_transient_retries = max_transient_retries
@@ -401,6 +462,9 @@ class ChatCompletionClient:
         json_schema: Mapping[str, Any] | None = None,
         json_schema_name: str = "response",
         max_output_tokens: int | None = None,
+        stage: str = "unspecified",
+        schema_sha256: str | None = None,
+        coverage_digest_sha256: str | None = None,
     ) -> CompletionResult:
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -424,7 +488,8 @@ class ChatCompletionClient:
             payload["max_completion_tokens"] = selected_ceiling
         else:
             payload["max_tokens"] = selected_ceiling
-        if json_schema is not None and self.config.name in {"gemini", "kimi"}:
+        capability = PROVIDER_CAPABILITIES[self.config.name]
+        if json_schema is not None and capability.supports_strict_json_schema:
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -433,9 +498,11 @@ class ChatCompletionClient:
                     "schema": dict(json_schema),
                 },
             }
-        elif json_mode:
+        elif json_mode and capability.supports_json_object_mode:
             payload["response_format"] = {"type": "json_object"}
-        _apply_reasoning_option(payload, self.config.name, self.config.model, reasoning_option)
+        selected_reasoning = _apply_reasoning_option(
+            payload, self.config.name, self.config.model, reasoning_option
+        )
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.endpoint,
@@ -448,50 +515,125 @@ class ChatCompletionClient:
                 "User-Agent": f"manuscript-revision-closure-standalone/{__version__}",
             },
         )
-        attempts = self.max_transient_retries + 1
-        for attempt in range(1, attempts + 1):
-            if self.on_attempt is not None:
-                self.on_attempt(attempt)
+        receipt: dict[str, Any] = {
+            "contract_version": PROVIDER_REQUEST_TRANSACTION_VERSION,
+            "request_id": str(uuid.uuid4()),
+            "stage": stage,
+            "provider": self.config.name,
+            "model": self.config.model,
+            "reasoning_option": selected_reasoning,
+            "physical_attempt_number": 1,
+            "timeout_seconds": self.timeout_seconds,
+            "max_transient_retries": 0,
+            "retry_decision": "STOP_NO_AUTOMATIC_RETRY",
+            "request_dispatched": False,
+            "provider_outcome": "NOT_CALLED",
+            "http_status": None,
+            "retry_after": None,
+            "error_class": None,
+            "error_summary": None,
+            "usage_status": "UNKNOWN",
+            "usage": {},
+            "schema_sha256": schema_sha256,
+            "coverage_digest_sha256": coverage_digest_sha256,
+            "schema_delivery_mode": capability.schema_delivery_mode,
+            "started_at": _utc_now(),
+            "finished_at": None,
+        }
+        if self.on_attempt is not None:
+            self.on_attempt(1)
+        receipt["request_dispatched"] = True
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                receipt["http_status"] = int(getattr(response, "status", 200))
+                response_payload = json.loads(response.read().decode("utf-8"))
+            completion = self._parse_payload(response_payload)
+            receipt["provider_outcome"] = "SUCCEEDED"
+            receipt["usage"] = dict(completion.usage)
+            receipt["usage_status"] = (
+                "COMPLETE"
+                if {"prompt_tokens", "completion_tokens"}.issubset(completion.usage)
+                else "PARTIAL" if completion.usage else "UNKNOWN"
+            )
+            receipt["finished_at"] = _utc_now()
+            return CompletionResult(
+                content=completion.content,
+                model=completion.model,
+                usage=dict(completion.usage),
+                finish_reason=completion.finish_reason,
+                request_receipts=(dict(receipt),),
+            )
+        except urllib.error.HTTPError as exc:
+            detail = ""
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-                return self._parse_payload(payload)
-            except urllib.error.HTTPError as exc:
-                transient = exc.code in _RETRYABLE_HTTP_STATUSES
-                if transient and attempt < attempts:
-                    time.sleep(float(attempt))
-                    continue
+                error_payload = json.loads(exc.read(64 * 1024).decode("utf-8"))
+                candidate = error_payload.get("error", {}).get("message")
+                if isinstance(candidate, str):
+                    detail = " ".join(candidate.split())[:500]
+            except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
                 detail = ""
-                try:
-                    error_payload = json.loads(exc.read(64 * 1024).decode("utf-8"))
-                    candidate = error_payload.get("error", {}).get("message")
-                    if isinstance(candidate, str):
-                        detail = " ".join(candidate.split())[:500]
-                except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-                    detail = ""
-                suffix = f": {detail}" if detail else ""
-                raise ProviderRequestError(
-                    f"provider HTTP request failed with status {exc.code}{suffix}"
-                ) from exc
-            except (TimeoutError, socket.timeout) as exc:
-                raise ProviderRequestError(
-                    f"provider response timed out after {self.timeout_seconds:g} seconds; "
-                    "the request was not automatically resent because server-side execution status is unknown"
-                ) from exc
-            except urllib.error.URLError as exc:
-                reason = getattr(exc, "reason", None)
-                if isinstance(reason, (TimeoutError, socket.timeout)):
-                    raise ProviderRequestError(
-                        f"provider response timed out after {self.timeout_seconds:g} seconds; "
-                        "the request was not automatically resent because server-side execution status is unknown"
-                    ) from exc
-                raise ProviderRequestError(
-                    "provider network request failed; the request was not automatically resent because "
-                    "server-side execution status is unknown"
-                ) from exc
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ProviderRequestError("provider returned an invalid JSON response") from exc
-        raise ProviderRequestError("provider request failed")
+            receipt.update(
+                {
+                    "provider_outcome": (
+                        "REJECTED" if 400 <= exc.code < 500 else "UNKNOWN"
+                    ),
+                    "http_status": exc.code,
+                    "retry_after": _bounded_retry_after(exc.headers),
+                    "error_class": "HTTPError",
+                    "error_summary": f"HTTP status {exc.code}",
+                    "finished_at": _utc_now(),
+                }
+            )
+            raise ProviderRequestError(
+                f"provider HTTP request failed with status {exc.code}; automatic resend is disabled",
+                request_receipts=(receipt,),
+            ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            receipt.update(
+                {
+                    "provider_outcome": "UNKNOWN",
+                    "error_class": type(exc).__name__,
+                    "error_summary": "provider response timeout; server-side execution status is unknown",
+                    "finished_at": _utc_now(),
+                }
+            )
+            raise ProviderRequestError(
+                f"provider response timed out after {self.timeout_seconds:g} seconds; "
+                "the request was not automatically resent because server-side execution status is unknown",
+                request_receipts=(receipt,),
+            ) from exc
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", None)
+            summary = (
+                "provider response timeout; server-side execution status is unknown"
+                if isinstance(reason, (TimeoutError, socket.timeout))
+                else "provider network failure; server-side execution status is unknown"
+            )
+            receipt.update(
+                {
+                    "provider_outcome": "UNKNOWN",
+                    "error_class": "URLError",
+                    "error_summary": summary,
+                    "finished_at": _utc_now(),
+                }
+            )
+            raise ProviderRequestError(
+                summary + "; the request was not automatically resent",
+                request_receipts=(receipt,),
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError, ProviderRequestError) as exc:
+            receipt.update(
+                {
+                    "provider_outcome": "UNKNOWN",
+                    "error_class": type(exc).__name__,
+                    "error_summary": "provider completion failed the bounded response envelope",
+                    "finished_at": _utc_now(),
+                }
+            )
+            raise ProviderRequestError(
+                "provider returned an unusable completion envelope",
+                request_receipts=(receipt,),
+            ) from exc
 
     def _parse_payload(self, payload: Any) -> CompletionResult:
         try:

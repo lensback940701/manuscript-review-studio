@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .document_reader import read_document
-from .harness import context_budget
+from .harness import context_budget, schema_sha256
 from .providers import ChatCompletionClient, load_provider_config, provider_stage_timeout_seconds
 
 
@@ -114,6 +114,7 @@ class InterpretationResult:
     usage: dict[str, int]
     context_budget: dict[str, Any]
     request_timeout_seconds: float
+    physical_request_receipts: tuple[dict[str, Any], ...] = ()
     contract_version: str = INTERPRETATION_CONTRACT_VERSION
 
     def as_dict(self) -> dict[str, Any]:
@@ -128,6 +129,7 @@ class InterpretationResult:
                 "context_budget": self.context_budget,
                 "request_timeout_seconds": self.request_timeout_seconds,
                 "contract_version": self.contract_version,
+                "physical_request_receipts": [dict(item) for item in self.physical_request_receipts],
             },
         }
 
@@ -301,9 +303,11 @@ def generate_interpretation(
     model: str | None,
     reasoning_option: str | None = None,
     timeout_seconds: float | None = None,
-    transient_retries: int = 2,
+    transient_retries: int = 0,
     on_attempt: Callable[[int], None] | None = None,
 ) -> InterpretationResult:
+    if transient_retries != 0:
+        raise InterpretationContractError("automatic full-request retries are disabled for interpretation")
     runtime = public_result.get("runtime", {}) if isinstance(public_result, Mapping) else {}
     status = runtime.get("status", {}) if isinstance(runtime, Mapping) else {}
     terminal_status = status.get("terminal_status", runtime.get("terminal_status")) if isinstance(status, Mapping) else runtime.get("terminal_status")
@@ -370,6 +374,8 @@ def generate_interpretation(
         json_schema=INTERPRETATION_JSON_SCHEMA,
         json_schema_name="mrc_public_interpretation",
         max_output_tokens=budget.requested_max_output_tokens,
+        stage="interpretation",
+        schema_sha256=schema_sha256(INTERPRETATION_JSON_SCHEMA),
     )
     if completion.finish_reason == "length":
         raise InterpretationContractError(
@@ -413,6 +419,7 @@ def generate_interpretation(
         usage=completion.usage,
         context_budget=budget.as_dict(),
         request_timeout_seconds=request_timeout,
+        physical_request_receipts=completion.request_receipts,
     )
 
 

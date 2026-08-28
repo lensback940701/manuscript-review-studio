@@ -5,6 +5,8 @@ $Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
 $Release = Join-Path $ProjectRoot 'release'
 $Work = Join-Path $ProjectRoot '.build\pyinstaller'
 $Spec = Join-Path $ProjectRoot '.build\spec'
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:PYTHONPATH = $ProjectRoot
 
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'Missing .venv. Create it with: python -m venv .venv'
@@ -12,7 +14,7 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 
 New-Item -ItemType Directory -Force -Path $Release, $Work, $Spec | Out-Null
 
-& $Python -m PyInstaller `
+& $Python -B -m PyInstaller `
     --noconfirm `
     --clean `
     --onefile `
@@ -35,11 +37,16 @@ if ($LASTEXITCODE -ne 0) {
 
 $Exe = Join-Path $Release 'ManuscriptRevisionClosure.exe'
 $Hash = Get-FileHash -Algorithm SHA256 -LiteralPath $Exe
+$ContractJson = & $Python -B -c "import hashlib,json; from standalone.harness import COVERAGE_JSON_SCHEMA,build_adjudication_json_schema,schema_sha256; from standalone.providers import PROVIDERS,provider_capability; caps={k:provider_capability(k) for k in sorted(PROVIDERS)}; cap_text=json.dumps(caps,sort_keys=True,separators=(',',':')); print(json.dumps({'coverage_schema_sha256':schema_sha256(COVERAGE_JSON_SCHEMA),'empty_candidate_adjudication_schema_sha256':schema_sha256(build_adjudication_json_schema({'root_cause_candidate_dimensions':[]})),'provider_capability_registry_sha256':hashlib.sha256(cap_text.encode()).hexdigest()}))"
+if ($LASTEXITCODE -ne 0) {
+    throw "Technical contract hash extraction failed with exit code $LASTEXITCODE"
+}
+$Contracts = $ContractJson | ConvertFrom-Json
 $Receipt = [ordered]@{
     filename = [IO.Path]::GetFileName($Exe)
     bytes = (Get-Item -LiteralPath $Exe).Length
     sha256 = $Hash.Hash
-    standalone_version = '0.6.2'
+    standalone_version = '0.6.3'
     skill_version = '0.2.1'
     presentation_transaction_version = 'mrc-presentation-transaction-1.0'
     presentation_source_contract_version = 'mrc-presentation-source-2.0'
@@ -50,6 +57,14 @@ $Receipt = [ordered]@{
     coverage_contract_version = 'mrc-whole-manuscript-coverage-1.0'
     adjudication_contract_version = 'mrc-root-cause-adjudication-1.0'
     contradiction_gate_version = 'mrc-cross-stage-contradiction-gate-1.0'
+    provider_request_transaction_version = 'mrc-provider-request-transaction-1.0'
+    schema_delivery_contract_version = 'mrc-canonical-schema-delivery-1.0'
+    dynamic_adjudication_schema_version = 'mrc-dynamic-adjudication-schema-1.0'
+    candidate_exact_set_contract_version = 'mrc-candidate-exact-set-1.0'
+    technical_state_contract_version = 'mrc-technical-execution-state-1.0'
+    coverage_schema_sha256 = $Contracts.coverage_schema_sha256
+    empty_candidate_adjudication_schema_sha256 = $Contracts.empty_candidate_adjudication_schema_sha256
+    provider_capability_registry_sha256 = $Contracts.provider_capability_registry_sha256
     interpretation_agent_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $ProjectRoot 'standalone\AGENT.md')).Hash
     pyinstaller = '6.22.2'
     pypdf = '6.16.2'

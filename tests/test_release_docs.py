@@ -103,6 +103,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
                 or "release" in path.parts
                 or "__pycache__" in path.parts
                 or "配图" in path.parts
+                or path.name.endswith("_GOAL.zh-CN.md")
                 or path.resolve() == Path(__file__).resolve()
                 or path.suffix.casefold() in {".png", ".jpg", ".jpeg", ".jfif"}
             ):

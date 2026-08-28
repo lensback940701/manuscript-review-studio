@@ -47,6 +47,25 @@ from .providers import (
 
 APP_TITLE = "Manuscript Revision Closure"
 
+
+def reduce_gui_terminal_state(
+    machine_status: str | None,
+    presentation_status: str | None,
+    *,
+    configuration_failed: bool = False,
+) -> str:
+    """Apply the public machine-first terminal truth table."""
+
+    if configuration_failed:
+        return "failed"
+    if machine_status != "SUCCEEDED":
+        return "completed_with_machine_hold"
+    if presentation_status == "HOLD":
+        return "completed_with_presentation_hold"
+    if presentation_status == "PASS":
+        return "completed"
+    raise ValueError("successful machine state requires PASS or HOLD presentation status")
+
 PHASE_MESSAGES = {
     "created": "建立本地任务",
     "reading": "读取并核对不可变稿件",
@@ -90,6 +109,7 @@ class GuiState:
     error: str | None = None
     interpretation_error: str | None = None
     presentation_error: str | None = None
+    machine_error: str | None = None
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     selected_manuscript: str = ""
     selected_prior_receipt: str = ""
@@ -109,6 +129,7 @@ class GuiState:
                 "error": self.error,
                 "interpretation_error": self.interpretation_error,
                 "presentation_error": self.presentation_error,
+                "machine_error": self.machine_error,
                 "request_id": self.request_id,
                 "timeline": deepcopy(self.timeline),
                 "selected_manuscript": self.selected_manuscript,
@@ -136,6 +157,7 @@ class GuiState:
             self.error = None
             self.interpretation_error = None
             self.presentation_error = None
+            self.machine_error = None
             self.request_id = str(uuid.uuid4())
             self._seen_terminal_keys.clear()
             self.timeline = []
@@ -214,6 +236,19 @@ class GuiState:
                     "attempt": event.get("attempt"),
                     "timeout_seconds": event.get("timeout_seconds"),
                     "max_transient_retries": event.get("max_transient_retries"),
+                    "retry_decision": event.get("retry_decision"),
+                }
+            elif event_type == "provider.result":
+                self.phase = event_phase
+                stage = str(event.get("stage") or "model")
+                message = f"{stage} provider 请求结果已记录"
+                details = {
+                    key: event.get(key)
+                    for key in (
+                        "stage", "provider", "model", "reasoning_option", "attempt",
+                        "timeout_seconds", "max_transient_retries", "retry_decision",
+                        "provider_outcome", "http_status", "error_class", "usage_status",
+                    )
                 }
             elif event_type == "turn.completed":
                 self.phase = "core_completed"
@@ -285,6 +320,24 @@ class GuiState:
                 self.phase,
                 self.message,
                 {"presentation_hold": True, "error": message},
+            )
+
+    def machine_hold(self, message: str, *, manuscript_complete: bool = True) -> None:
+        with self._lock:
+            self.busy = False
+            self.phase = "completed_with_machine_hold"
+            self.message = (
+                "稿件完整性：PASS；机器裁决未形成；公开展示未启动"
+                if manuscript_complete
+                else "稿件完整性：HOLD；机器裁决未形成；公开展示未启动"
+            )
+            self.error = None
+            self.presentation_error = None
+            self.machine_error = message
+            self._append_locked(
+                self.phase,
+                self.message,
+                {"machine_hold": True, "error": message},
             )
 
     def interpretation_fail(self, message: str) -> None:
@@ -555,7 +608,28 @@ def _analysis_worker(state: GuiState, payload: dict[str, Any]) -> None:
         return
 
     core_runtime = public_result.get("runtime", {})
-    if core_runtime.get("terminal_status") == "HOLD" or core_runtime.get("presentation_status") == "HOLD":
+    gui_route = reduce_gui_terminal_state(
+        core_runtime.get("machine_status"),
+        core_runtime.get("presentation_status"),
+    )
+    if gui_route == "completed_with_machine_hold":
+        _attach_task_cost(state, public_result, provider, selected_model)
+        machine_receipt = core_runtime.get("machine_receipt", {})
+        failed_stage = machine_receipt.get("failed_stage") if isinstance(machine_receipt, dict) else None
+        error_message = machine_receipt.get("error_message") if isinstance(machine_receipt, dict) else None
+        intake = core_runtime.get("harness", {}).get("intake", {})
+        intake_pass = bool(confirmed and isinstance(intake, dict) and intake.get("complete_structure"))
+        if intake_pass:
+            message = (
+                f"失败阶段：{failed_stage or 'configuration'}；"
+                "下一步：修复技术问题或由用户重新发起一次新任务"
+                + (f"；{error_message}" if error_message else "")
+            )
+        else:
+            message = "请提供一份身份明确、完整且为当前版本的稿件；机器裁决与公开展示均未启动"
+        state.machine_hold(message, manuscript_complete=intake_pass)
+        return
+    if gui_route == "completed_with_presentation_hold":
         _attach_task_cost(state, public_result, provider, selected_model)
         presentation_receipt = core_runtime.get("presentation_receipt", {})
         error_code = presentation_receipt.get("error_code") if isinstance(presentation_receipt, dict) else None
@@ -622,16 +696,34 @@ def _attach_task_cost(
 ) -> None:
     usages: list[dict[str, int]] = []
     core_runtime = public_result.get("runtime", {})
+    physical_calls = core_runtime.get("physical_request_receipts")
     core_calls = core_runtime.get("usage_calls")
-    if core_runtime.get("api_called") and isinstance(core_calls, list):
+    if core_runtime.get("api_called") and isinstance(physical_calls, list):
+        for item in physical_calls:
+            if not isinstance(item, dict) or not item.get("request_dispatched"):
+                continue
+            usage = item.get("usage")
+            usages.append(dict(usage) if item.get("usage_status") != "UNKNOWN" and isinstance(usage, dict) else {})
+    elif core_runtime.get("api_called") and isinstance(core_calls, list):
         usages.extend(item for item in core_calls if isinstance(item, dict))
     elif core_runtime.get("api_called") and isinstance(core_runtime.get("usage"), dict):
         usages.append(core_runtime["usage"])
     interpretation = public_result.get("interpretation")
     if isinstance(interpretation, dict):
         interpretation_runtime = interpretation.get("runtime", {})
-        if isinstance(interpretation_runtime, dict) and isinstance(interpretation_runtime.get("usage"), dict):
-            usages.append(interpretation_runtime["usage"])
+        if isinstance(interpretation_runtime, dict):
+            interpretation_physical = interpretation_runtime.get("physical_request_receipts")
+            if isinstance(interpretation_physical, list) and interpretation_physical:
+                for item in interpretation_physical:
+                    if isinstance(item, dict) and item.get("request_dispatched"):
+                        usage = item.get("usage")
+                        usages.append(
+                            dict(usage)
+                            if item.get("usage_status") != "UNKNOWN" and isinstance(usage, dict)
+                            else {}
+                        )
+            elif isinstance(interpretation_runtime.get("usage"), dict):
+                usages.append(interpretation_runtime["usage"])
     failed_interpretation = public_result.get("failed_interpretation_runtime")
     if isinstance(failed_interpretation, dict) and isinstance(failed_interpretation.get("usage"), dict):
         usages.append(failed_interpretation["usage"])
@@ -645,6 +737,9 @@ def _attach_task_cost(
             "total_estimated_cost_cny": 0.0,
             "currency": "USD",
             "exchange_rate": None,
+            "physical_request_attempt_count": 0,
+            "usage_receipt_count": 0,
+            "unknown_potential_charge_attempt_count": 0,
             "billing_limitations": ["本次没有调用模型 API，因此 token 计价为 0。"],
         }
         state.attach_result_field("task_cost", public_result["task_cost"])
@@ -755,10 +850,10 @@ function renderSuggestions(items){{const el=$('suggestions');el.textContent='';i
 function renderHarness(runtime){{const h=runtime&&runtime.harness;$('harnessBox').style.display=h?'block':'none';if(!h)return;const intake=h.intake||{{}},items=['Intake 完整结构：'+(intake.complete_structure?'PASS':'HOLD')+'（标题/摘要/结论/参考文献）','整稿覆盖：'+(h.coverage_completed?'PASS':'HOLD')+'；维度 '+(h.coverage_dimension_count||0)+'/10','Adjudication coverage hash 绑定：'+(h.adjudication_coverage_binding?'PASS':'HOLD'),'跨阶段矛盾门：'+(h.contradiction_gate_passed?'PASS':'HOLD')];(h.context_budgets||[]).forEach((b,i)=>items.push('上下文预算 '+(i+1)+'：'+(b.passed?'PASS':'HOLD')+'；估算输入 '+b.estimated_input_tokens+' / 上限 '+b.context_limit_tokens+' tokens'));list('harnessChecks',items)}}
 function renderInterpretation(bundle){{const doc=bundle&&bundle.document;$('interpretation').style.display=doc?'block':'none';if(!doc)return;$('statusExplanation').textContent=doc.status_explanation;list('judgmentBasis',doc.judgment_basis);list('judgmentPrinciples',doc.judgment_principles);list('stable',doc.what_is_stable);list('attention',doc.remaining_attention);list('checklist',doc.pre_submission_checklist);list('limitations',doc.report_limitations);cards('findings',doc.selective_findings,'finding');cards('adjustments',doc.optional_micro_adjustments,'adjustment');const dims=$('dimensions');dims.textContent='';doc.assessment_dimensions.forEach(item=>{{const box=document.createElement('div');box.className='finding';const title=document.createElement('b');title.textContent=item.dimension;const finding=document.createElement('div');finding.textContent=item.finding;const implication=document.createElement('div');implication.className='why';implication.textContent='裁决含义：'+item.implication;box.append(title,finding,implication);dims.appendChild(box)}});$('boundary').textContent=doc.boundary_note}}
 function moneyPair(usd,cny){{const parts=[];if(cny!==null&&cny!==undefined)parts.push('CNY ¥'+Number(cny).toFixed(6));if(usd!==null&&usd!==undefined)parts.push('USD $'+Number(usd).toFixed(6));return parts.length?parts.join(' / '):'不可用'}}
-function renderCost(cost){{$('costBox').style.display=cost?'block':'none';if(!cost)return;$('costTotal').textContent=cost.status==='no_api_calls'?'CNY ¥0.000000 / USD $0.000000（未调用 API）':(cost.status==='usage_unavailable'?'API 未返回完整 token usage，无法估算':('约 '+moneyPair(cost.total_estimated_cost_usd,cost.total_estimated_cost_cny)));const pricing=cost.pricing,fx=cost.exchange_rate;$('costSource').textContent=pricing?('价格来源：'+pricing.source_status+'；原币 '+pricing.currency+'；'+pricing.price_as_of+'；'+pricing.source_url+'；'+pricing.note+(fx?(' 汇率来源：'+fx.source_status+'；'+fx.rate_date+'；1 USD = '+Number(fx.usd_to_cny).toFixed(6)+' CNY；'+fx.source_url+'。'):'')):'没有可验证的该模型价格。';const callItems=(cost.calls||[]).map(item=>'API '+item.call_index+'：'+(item.usage_complete===false?'token usage 不完整，费用不可用':('输入 '+item.prompt_tokens+'，缓存命中 '+item.cache_hit_tokens+'，输出 '+item.completion_tokens+' tokens，估算 '+moneyPair(item.estimated_cost_usd,item.estimated_cost_cny))));list('costCalls',callItems);list('costLimits',cost.billing_limitations)}}
+function renderCost(cost){{$('costBox').style.display=cost?'block':'none';if(!cost)return;const unknown=Number(cost.unknown_potential_charge_attempt_count||0),knownLabel='已知 usage 估算小计约 '+moneyPair(cost.total_estimated_cost_usd,cost.total_estimated_cost_cny);$('costTotal').textContent=cost.status==='no_api_calls'?'CNY ¥0.000000 / USD $0.000000（未调用 API）':(unknown?(knownLabel+'；另有 '+unknown+' 次潜在计费请求 usage 未知'):('约 '+moneyPair(cost.total_estimated_cost_usd,cost.total_estimated_cost_cny)));const pricing=cost.pricing,fx=cost.exchange_rate;$('costSource').textContent=pricing?('价格来源：'+pricing.source_status+'；原币 '+pricing.currency+'；'+pricing.price_as_of+'；'+pricing.source_url+'；'+pricing.note+(fx?(' 汇率来源：'+fx.source_status+'；'+fx.rate_date+'；1 USD = '+Number(fx.usd_to_cny).toFixed(6)+' CNY；'+fx.source_url+'。'):'')):'没有可验证的该模型价格。';const callItems=(cost.calls||[]).map(item=>'API '+item.call_index+'：'+(item.usage_complete===false?'UNKNOWN_POTENTIAL_CHARGE；provider 未返回 usage，不按零费用处理':('输入 '+item.prompt_tokens+'，缓存命中 '+item.cache_hit_tokens+'，输出 '+item.completion_tokens+' tokens，估算 '+moneyPair(item.estimated_cost_usd,item.estimated_cost_cny))));list('costCalls',callItems);list('costLimits',cost.billing_limitations)}}
 function renderTimeline(items){{const el=$('timeline');el.textContent='';(items||[]).forEach(item=>{{const li=document.createElement('li');const clock=document.createElement('div');clock.className='time';clock.textContent=Number(item.elapsed_seconds).toFixed(1)+' 秒';const body=document.createElement('div');const message=document.createElement('div');message.textContent=item.message;body.appendChild(message);if(item.details&&Object.keys(item.details).length){{const detail=document.createElement('div');detail.className='detail';detail.textContent=JSON.stringify(item.details);body.appendChild(detail)}}li.append(clock,body);el.appendChild(li)}});el.scrollTop=el.scrollHeight}}
-function renderResult(result,busy,interpretationError,presentationError){{lastResult=result;const c=result.closure_card;$('result').style.display='block';$('verdict').textContent=c.Verdict;$('reason').textContent=c.Reason;list('evidence',c['Evidence holds']);list('submission',c['Submission / external holds']);list('protected',c['Protected / Do not disturb']);renderSuggestions(c['Lite directional suggestions']);$('next').textContent=c['Next permitted action'];renderHarness(result.runtime);renderCost(result.task_cost);renderInterpretation(result.interpretation);$('json').textContent=JSON.stringify(result,null,2);$('save').disabled=busy;$('copy').disabled=busy;$('saveInterpretation').disabled=busy||!(result.interpretation&&result.interpretation.document);const holdText=presentationError?('机器裁决保持有效，但公开展示处于 HOLD：'+presentationError):(interpretationError?('核心裁决保持有效，但中文解读未生成：'+interpretationError):'');$('interpError').textContent=holdText;$('interpError').style.display=holdText?'block':'none'}}
-function renderStatus(s){{providers=s.providers;updateProvider();$('phase').textContent=s.phase;$('message').textContent=s.message;$('elapsed').textContent=Number(s.elapsed_seconds).toFixed(1)+' 秒';$('run').disabled=s.busy;$('dot').className='dot '+(s.busy?'busy':(s.error||s.presentation_error)?'bad':s.result?'ok':'');renderTimeline(s.timeline);if(s.error)showError(s.error);if(s.result)renderResult(s.result,s.busy,s.interpretation_error,s.presentation_error);if(!s.busy&&poller){{clearInterval(poller);poller=null}}}}
+function renderResult(result,busy,interpretationError,presentationError,machineError){{lastResult=result;const c=result.closure_card;$('result').style.display='block';$('verdict').textContent=c.Verdict;$('reason').textContent=c.Reason;list('evidence',c['Evidence holds']);list('submission',c['Submission / external holds']);list('protected',c['Protected / Do not disturb']);renderSuggestions(c['Lite directional suggestions']);$('next').textContent=c['Next permitted action'];renderHarness(result.runtime);renderCost(result.task_cost);renderInterpretation(result.interpretation);$('json').textContent=JSON.stringify(result,null,2);$('save').disabled=busy;$('copy').disabled=busy;$('saveInterpretation').disabled=busy||!(result.interpretation&&result.interpretation.document);const holdText=machineError?('机器裁决未形成；公开展示未启动：'+machineError):(presentationError?('机器裁决保持有效，但公开展示处于 HOLD：'+presentationError):(interpretationError?('核心裁决保持有效，但中文解读未生成：'+interpretationError):''));$('interpError').textContent=holdText;$('interpError').style.display=holdText?'block':'none'}}
+function renderStatus(s){{providers=s.providers;updateProvider();$('phase').textContent=s.phase;$('message').textContent=s.message;$('elapsed').textContent=Number(s.elapsed_seconds).toFixed(1)+' 秒';$('run').disabled=s.busy;$('dot').className='dot '+(s.busy?'busy':(s.error||s.presentation_error||s.machine_error)?'bad':s.result?'ok':'');renderTimeline(s.timeline);if(s.error)showError(s.error);if(s.result)renderResult(s.result,s.busy,s.interpretation_error,s.presentation_error,s.machine_error);if(!s.busy&&poller){{clearInterval(poller);poller=null}}}}
 async function refresh(){{try{{renderStatus(await api('/api/status'))}}catch(e){{showError(e.message)}}}}
 $('provider').onchange=async()=>{{$('modelSource').textContent='';updateProvider(true);await refreshModelCatalog()}};$('model').onchange=refreshReasoningOptions;$('refreshModels').onclick=refreshModelCatalog;$('pickManuscript').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-manuscript',{{}});if(r.path){{$('manuscript').value=r.path;$('identity').value=r.path.split(/[\\/]/).pop()}}}}catch(e){{showError(e.message)}}}};
 $('pickPrior').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-prior',{{}});if(r.path)$('prior').value=r.path}}catch(e){{showError(e.message)}}}};

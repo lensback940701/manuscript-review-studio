@@ -1,16 +1,16 @@
-# Manuscript Revision Closure Standalone 0.6.2：原生 Presentation Transaction 审计
+# Manuscript Revision Closure Standalone 0.6.3：原生事务与状态完整性审计
 
 ## 1. 锁定范围
 
 - 目标仓库：`lensback940701/manuscript-revision-closure`
-- 唯一施工基线：`ed679849762c11e3aabd848396c09b0adfdb6ab2`
-- 新分支：`repair/0.6.2-presentation-transaction-native`
-- Standalone：`0.6.2`
+- 0.6.3 唯一施工基线：`32240b62344cf504e39342967b6b2ae158abab8f`
+- 0.6.3 修复分支：`repair/0.6.3-provider-contract-state-integrity`
+- Standalone：`0.6.3`
 - Skill contract：`0.2.1`
 - Codex 固定参考：`d5caceccb1ee5bf94c081b995575ce4860e0912b`
 - 实现阶段检查的 Codex main：`6be2a6ca952ac9f70676ce4dd07fda27175aa9dd`
 
-历史提交 `734afe96d015e94ea1790ca1151aee19e0e9ac62` 只作为 failure-first 与设计思想 donor。本实现没有导入该分支，没有在 `standalone/__init__.py` 安装 patch，没有保存 `_mrc_original_*`，也没有通过 wrapper 重放旧 `analyze_manuscript()`。
+0.6.2 的 presentation transaction 保持为正向 donor；0.6.3 只修复 provider 请求、schema delivery、动态 candidate exact-set、machine/presentation 分流与物理计数，不改变 Skill `0.2.1` 的业务裁决。
 
 ## 2. Failure-first
 
@@ -57,7 +57,7 @@ immutable manuscript read
 
 ```text
 machine_status = SUCCEEDED | HOLD
-presentation_status = PASS | HOLD
+presentation_status = NOT_STARTED | PASS | HOLD
 terminal_status = PASS | HOLD
 recoverability = NONE | PRESENTATION_REPAIR
 machine_provider_outcome = NOT_CALLED | SUCCEEDED | REJECTED | UNKNOWN
@@ -69,12 +69,11 @@ usage_status = COMPLETE | PARTIAL | UNKNOWN
 
 ## 5. Provider completion 与 usage
 
-`standalone/assessor.py` 在每次 `CompletionResult` 返回后立即形成 bounded provider receipt。receipt 仅包含 stage、provider outcome、model、finish reason、usage、attempt count、timeout、retry 和 context/output budget；不含完整 response content。
+`standalone/providers.py` 在每个物理 HTTP attempt 发出前建立 bounded receipt，并在结果明确后更新。receipt 只包含 request identity、stage、provider/model/reasoning、timeout、outcome、HTTP status、bounded error class/summary、usage status、schema hashes 与时间戳；不含完整请求体、稿件、Authorization 或原始 response。
 
-- coverage/adjudication 沿用原有限 transient retry 合同；
-- presentation repair 强制 `max_transient_retries=0`；
+- coverage、adjudication、presentation repair 与 interpretation 均强制 `max_transient_retries=0`；
 - Kimi presentation repair timeout 为 900 秒；
-- timeout、socket/read error、连接中断、429/502/503/504 或其他 provider error均不会自动重发 presentation request；
+- timeout、socket/read error、连接中断、429/502/503/504 或其他 provider error 均不会自动重发全文请求；
 - presentation output budget由 provider ceiling、context limit、估算输入、safety margin及有限 schema 最大输出共同形成，不使用固定 4096/5000/8192 cap。
 
 ## 6. Machine state 冻结

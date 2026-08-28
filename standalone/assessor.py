@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -23,6 +25,7 @@ from .document_reader import DocumentContent, DocumentReadError, read_document
 from .events import EventSink, RunPhase
 from .harness import (
     ADJUDICATION_CONTRACT_VERSION,
+    CANDIDATE_EXACT_SET_CONTRACT_VERSION,
     COVERAGE_CONTRACT_VERSION,
     COVERAGE_DIMENSIONS,
     COVERAGE_JSON_SCHEMA,
@@ -31,12 +34,17 @@ from .harness import (
     IntakeReceipt,
     analyze_intake_structure,
     canonical_digest,
+    build_adjudication_json_schema,
+    candidate_exact_set_receipt,
     context_budget,
     coverage_is_complete,
     harness_receipt,
     validate_adjudication_binding,
+    validate_candidate_exact_set,
     validate_coverage,
     validate_cross_stage_consistency,
+    validate_json_schema_contract,
+    schema_sha256,
 )
 from .localization import localize_closure_card
 from .presentation_transaction import (
@@ -52,17 +60,14 @@ from .presentation_transaction import (
     repair_presentation,
     usage_status,
 )
-from .prompting import (
-    ADJUDICATION_JSON_SCHEMA,
-    build_adjudication_messages,
-    build_coverage_messages,
-)
+from .prompting import build_adjudication_messages, build_coverage_messages
 from .providers import (
     ChatCompletionClient,
     CompletionResult,
     ProviderConfigurationError,
     ProviderRequestError,
     load_provider_config,
+    provider_capability,
     provider_stage_timeout_seconds,
     validate_reasoning_option,
 )
@@ -107,7 +112,7 @@ class RunOptions:
     confirm_complete_current_manuscript: bool = False
     prior_receipt: Mapping[str, Any] | None = None
     timeout_seconds: float | None = None
-    transient_retries: int = 2
+    transient_retries: int = 0
     enable_presentation_repair: bool = True
 
 
@@ -135,6 +140,23 @@ class AnalysisResult:
 
     def as_dict(self) -> dict[str, Any]:
         status = dict(self.run_status)
+        physical_receipts = [
+            deepcopy(item)
+            for stage_receipt in self.provider_receipts
+            for item in stage_receipt.get("physical_request_receipts", [])
+            if isinstance(item, Mapping)
+        ]
+        successful_completions = sum(
+            item.get("provider_outcome") == "SUCCEEDED" for item in physical_receipts
+        )
+        usage_receipts = sum(
+            item.get("usage_status") in {"COMPLETE", "PARTIAL"} for item in physical_receipts
+        )
+        unknown_potential_charge = sum(
+            bool(item.get("request_dispatched"))
+            and item.get("usage_status") == "UNKNOWN"
+            for item in physical_receipts
+        )
         return {
             "closure_card": deepcopy(self.closure_card),
             "minimal_receipt": deepcopy(self.minimal_receipt),
@@ -147,7 +169,13 @@ class AnalysisResult:
                 "usage_calls": [dict(item) for item in self.usage_calls],
                 "usage_call_stages": list(self.usage_call_stages),
                 "provider_receipts": [deepcopy(item) for item in self.provider_receipts],
-                "provider_call_count": len(self.provider_receipts),
+                "physical_request_receipts": physical_receipts,
+                "provider_call_count": len(physical_receipts),
+                "physical_request_attempt_count": len(physical_receipts),
+                "successful_completion_count": successful_completions,
+                "usage_receipt_count": usage_receipts,
+                "logical_stage_count": len(self.provider_receipts),
+                "unknown_potential_charge_attempt_count": unknown_potential_charge,
                 "core_call_count": sum(
                     stage in {"coverage", "adjudication"}
                     for stage in self.usage_call_stages
@@ -351,26 +379,103 @@ def _receipt_usage(receipt: Mapping[str, Any]) -> dict[str, int]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _synthetic_physical_receipts(
+    *,
+    stage: str,
+    provider: str,
+    model: str,
+    reasoning_option: str,
+    attempt_count: int,
+    timeout_seconds: float,
+    provider_outcome: str,
+    usage: Mapping[str, int],
+    schema_digest: str | None,
+    coverage_digest: str | None,
+    error: BaseException | None = None,
+) -> list[dict[str, Any]]:
+    """Represent local mocks that call on_attempt but bypass the real HTTP client."""
+
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    count = max(1, attempt_count)
+    result: list[dict[str, Any]] = []
+    for number in range(1, count + 1):
+        item_usage = dict(usage) if number == count else {}
+        outcome = provider_outcome if number == count else "UNKNOWN"
+        result.append(
+            {
+                "contract_version": "mrc-provider-request-transaction-1.0",
+                "request_id": str(uuid.uuid4()),
+                "stage": stage,
+                "provider": provider,
+                "model": model,
+                "reasoning_option": reasoning_option,
+                "physical_attempt_number": number,
+                "timeout_seconds": timeout_seconds,
+                "max_transient_retries": 0,
+                "retry_decision": "STOP_NO_AUTOMATIC_RETRY",
+                "request_dispatched": True,
+                "provider_outcome": outcome,
+                "http_status": 200 if outcome == "SUCCEEDED" else None,
+                "retry_after": None,
+                "error_class": type(error).__name__ if error is not None else None,
+                "error_summary": str(error)[:500] if error is not None else None,
+                "usage_status": usage_status(item_usage),
+                "usage": item_usage,
+                "schema_sha256": schema_digest,
+                "coverage_digest_sha256": coverage_digest,
+                "schema_delivery_mode": provider_capability(provider)["schema_delivery_mode"],
+                "started_at": now,
+                "finished_at": now,
+                "test_transport": "mocked_completion",
+            }
+        )
+    return result
+
+
 def _provider_receipt_completed(
     stage: str,
     completion: CompletionResult,
     *,
+    provider: str,
+    requested_model: str,
+    reasoning_option: str,
     attempt_count: int,
     timeout_seconds: float,
-    max_transient_retries: int,
     budget: Mapping[str, Any],
+    schema_digest: str | None,
+    coverage_digest: str | None,
 ) -> dict[str, Any]:
+    physical = [deepcopy(dict(item)) for item in completion.request_receipts]
+    if not physical:
+        physical = _synthetic_physical_receipts(
+            stage=stage,
+            provider=provider,
+            model=completion.model or requested_model,
+            reasoning_option=reasoning_option,
+            attempt_count=attempt_count,
+            timeout_seconds=timeout_seconds,
+            provider_outcome="SUCCEEDED",
+            usage=completion.usage,
+            schema_digest=schema_digest,
+            coverage_digest=coverage_digest,
+        )
     return {
         "stage": stage,
         "provider_called": True,
         "provider_outcome": "SUCCEEDED",
+        "provider": provider,
         "model": completion.model,
+        "reasoning_option": reasoning_option,
         "finish_reason": completion.finish_reason,
         "usage": dict(completion.usage),
         "usage_status": usage_status(completion.usage),
-        "actual_attempt_count": attempt_count,
+        "actual_attempt_count": len(physical),
         "stage_timeout_seconds": timeout_seconds,
-        "max_transient_retries": max_transient_retries,
+        "max_transient_retries": 0,
+        "schema_sha256": schema_digest,
+        "coverage_digest_sha256": coverage_digest,
+        "provider_capability": provider_capability(provider),
+        "physical_request_receipts": physical,
         "budget": dict(budget),
         "committed_in_memory": True,
         "raw_provider_response_persisted": False,
@@ -381,22 +486,47 @@ def _provider_receipt_failed(
     stage: str,
     error: ProviderRequestError,
     *,
+    provider: str,
+    requested_model: str,
+    reasoning_option: str,
     attempt_count: int,
     timeout_seconds: float,
-    max_transient_retries: int,
     budget: Mapping[str, Any],
+    schema_digest: str | None,
+    coverage_digest: str | None,
 ) -> dict[str, Any]:
+    physical = [deepcopy(dict(item)) for item in error.request_receipts]
+    if not physical:
+        physical = _synthetic_physical_receipts(
+            stage=stage,
+            provider=provider,
+            model=requested_model,
+            reasoning_option=reasoning_option,
+            attempt_count=attempt_count,
+            timeout_seconds=timeout_seconds,
+            provider_outcome=provider_outcome_from_error(error),
+            usage={},
+            schema_digest=schema_digest,
+            coverage_digest=coverage_digest,
+            error=error,
+        )
     return {
         "stage": stage,
         "provider_called": True,
         "provider_outcome": provider_outcome_from_error(error),
-        "model": None,
+        "provider": provider,
+        "model": requested_model,
+        "reasoning_option": reasoning_option,
         "finish_reason": None,
         "usage": {},
         "usage_status": "UNKNOWN",
-        "actual_attempt_count": attempt_count,
+        "actual_attempt_count": len(physical),
         "stage_timeout_seconds": timeout_seconds,
-        "max_transient_retries": max_transient_retries,
+        "max_transient_retries": 0,
+        "schema_sha256": schema_digest,
+        "coverage_digest_sha256": coverage_digest,
+        "provider_capability": provider_capability(provider),
+        "physical_request_receipts": physical,
         "budget": dict(budget),
         "error_code": "PROVIDER_REQUEST_FAILED",
         "error_message": str(error),
@@ -405,21 +535,49 @@ def _provider_receipt_failed(
     }
 
 
-def _presentation_provider_receipt(result: PresentationRepairResult) -> dict[str, Any] | None:
+def _presentation_provider_receipt(
+    result: PresentationRepairResult,
+    *,
+    provider: str,
+    requested_model: str,
+    reasoning_option: str,
+) -> dict[str, Any] | None:
     receipt = result.receipt
     if not receipt.get("provider_called"):
         return None
+    physical = [
+        deepcopy(dict(item))
+        for item in receipt.get("physical_request_receipts", [])
+        if isinstance(item, Mapping)
+    ]
+    if not physical:
+        physical = _synthetic_physical_receipts(
+            stage="presentation_repair",
+            provider=provider,
+            model=result.model or requested_model,
+            reasoning_option=reasoning_option,
+            attempt_count=result.attempts,
+            timeout_seconds=float(receipt.get("stage_timeout_seconds") or 0.0),
+            provider_outcome=result.provider_outcome,
+            usage=result.usage,
+            schema_digest=receipt.get("schema_sha256"),
+            coverage_digest=receipt.get("coverage_digest_sha256"),
+            error=RuntimeError(result.error_message) if result.error_message else None,
+        )
     return {
         "stage": "presentation_repair",
         "provider_called": True,
         "provider_outcome": result.provider_outcome,
+        "provider": provider,
         "model": result.model,
+        "reasoning_option": reasoning_option,
         "finish_reason": receipt.get("finish_reason"),
         "usage": dict(result.usage),
         "usage_status": usage_status(result.usage),
-        "actual_attempt_count": result.attempts,
+        "actual_attempt_count": len(physical),
         "stage_timeout_seconds": receipt.get("stage_timeout_seconds"),
         "max_transient_retries": 0,
+        "physical_request_receipts": physical,
         "budget": deepcopy(receipt.get("budget")),
         "error_code": result.error_code,
         "committed_in_memory": True,
@@ -438,9 +596,19 @@ def _provider_outcome_for_machine(receipts: Sequence[Mapping[str, Any]]) -> str:
     return "SUCCEEDED"
 
 
+def _flatten_physical_receipts(receipts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        deepcopy(dict(item))
+        for receipt in receipts
+        for item in receipt.get("physical_request_receipts", [])
+        if isinstance(item, Mapping)
+    ]
+
+
 def _usage_status_for_receipts(receipts: Sequence[Mapping[str, Any]]) -> str:
-    attempted = sum(bool(item.get("provider_called")) for item in receipts)
-    usages = [_receipt_usage(item) for item in receipts if item.get("provider_called")]
+    physical = _flatten_physical_receipts(receipts)
+    attempted = sum(bool(item.get("request_dispatched")) for item in physical)
+    usages = [_receipt_usage(item) for item in physical if item.get("usage_status") != "UNKNOWN"]
     return aggregate_usage_status(usages, attempted_call_count=attempted)
 
 
@@ -480,16 +648,23 @@ def _finish(
         semantic_content_sha256=document.semantic_content_sha256,
     )
     safe_provider_receipts = tuple(deepcopy(dict(item)) for item in provider_receipts)
-    usage_calls = tuple(_receipt_usage(item) for item in safe_provider_receipts if item.get("provider_called"))
-    usage_stages = tuple(
-        str(item.get("stage")) for item in safe_provider_receipts if item.get("provider_called")
+    physical_receipts = _flatten_physical_receipts(safe_provider_receipts)
+    usage_calls = tuple(
+        _receipt_usage(item)
+        for item in physical_receipts
+        if item.get("usage_status") != "UNKNOWN"
     )
-    api_called = any(bool(item.get("provider_called")) for item in safe_provider_receipts)
+    usage_stages = tuple(
+        str(item.get("stage"))
+        for item in physical_receipts
+        if item.get("usage_status") != "UNKNOWN"
+    )
+    api_called = any(bool(item.get("request_dispatched")) for item in physical_receipts)
     status = dict(run_status or {})
     if not status:
         status = _status(
             machine_status="HOLD" if card["Verdict"] == "UNASSESSED" else "SUCCEEDED",
-            presentation_status="HOLD" if card["Verdict"] == "UNASSESSED" else "PASS",
+            presentation_status="NOT_STARTED" if card["Verdict"] == "UNASSESSED" else "PASS",
             terminal_status="HOLD" if card["Verdict"] == "UNASSESSED" else "PASS",
             recoverability="NONE",
             machine_provider_outcome=_provider_outcome_for_machine(safe_provider_receipts),
@@ -527,6 +702,8 @@ def _request_stage(
     schema: Mapping[str, Any],
     schema_name: str,
     budget: ContextBudgetReceipt,
+    stage: str,
+    coverage_digest: str | None = None,
 ) -> CompletionResult:
     if not budget.passed:
         raise HarnessContractError("model context budget cannot hold the complete stage input and output reserve")
@@ -537,6 +714,9 @@ def _request_stage(
         json_schema=schema,
         json_schema_name=schema_name,
         max_output_tokens=budget.requested_max_output_tokens,
+        stage=stage,
+        schema_sha256=schema_sha256(schema),
+        coverage_digest_sha256=coverage_digest,
     )
     if completion.finish_reason == "length":
         raise ModelContractError(f"provider truncated {schema_name} at its output limit")
@@ -551,11 +731,14 @@ def _machine_receipt_success(
     digest = machine_state_digest(state, coverage_digest_sha256=coverage_digest)
     source = build_presentation_source(state)
     decision = decide_state(state)
+    adjudication_schema = build_adjudication_json_schema(coverage)
     return {
         "contract_version": "mrc-machine-receipt-2.0",
         "status": "SUCCEEDED",
         "coverage_digest_sha256": coverage_digest,
         "adjudication_contract_version": ADJUDICATION_CONTRACT_VERSION,
+        "adjudication_schema_sha256": schema_sha256(adjudication_schema),
+        "candidate_exact_set": candidate_exact_set_receipt(coverage, state),
         "contradiction_gate_passed": True,
         "machine_state_digest_sha256": digest,
         "machine_state_digest_after_presentation_sha256": digest,
@@ -580,10 +763,10 @@ def _machine_receipt_hold(
     error_code: str,
     error_message: str,
     candidate_state: Mapping[str, Any] | None = None,
+    diagnostic_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     coverage_digest = canonical_digest(coverage) if coverage is not None else None
     candidate_digest = None
-    source_receipt = None
     if candidate_state is not None:
         candidate_full = deepcopy(dict(state))
         candidate_full.update(deepcopy(dict(candidate_state)))
@@ -591,8 +774,7 @@ def _machine_receipt_hold(
             candidate_full,
             coverage_digest_sha256=coverage_digest,
         )
-        source_receipt = build_presentation_source(candidate_full).bounded_receipt()
-    return {
+    result = {
         "contract_version": "mrc-machine-receipt-2.0",
         "status": "HOLD",
         "failed_stage": failed_stage,
@@ -601,8 +783,12 @@ def _machine_receipt_hold(
         "coverage_digest_sha256": coverage_digest,
         "candidate_state_digest_sha256": candidate_digest,
         "contradiction_gate_passed": False,
-        "authoritative_presentation_source": source_receipt,
+        "authoritative_presentation_source": None,
+        "authoritative_candidate_state": False,
     }
+    if isinstance(diagnostic_receipt, Mapping):
+        result["bounded_contract_failure"] = deepcopy(dict(diagnostic_receipt))
+    return result
 
 
 def _hold_result(
@@ -631,17 +817,18 @@ def _hold_result(
         error_code=type(error).__name__,
         error_message=str(error),
         candidate_state=candidate_state,
+        diagnostic_receipt=getattr(error, "contract_receipt", None),
     )
     status = _status(
         machine_status="HOLD",
-        presentation_status="HOLD",
+        presentation_status="NOT_STARTED",
         terminal_status="HOLD",
         recoverability="NONE",
         machine_provider_outcome=_provider_outcome_for_machine(provider_receipts),
         presentation_provider_outcome="NOT_CALLED",
         usage_status_value=_usage_status_for_receipts(provider_receipts),
     )
-    return _finish(
+    result = _finish(
         document,
         state,
         sink,
@@ -661,7 +848,7 @@ def _hold_result(
         machine_receipt=machine_receipt,
         presentation_receipt={
             "transaction_version": PRESENTATION_TRANSACTION_VERSION,
-            "status": "HOLD",
+            "status": "NOT_STARTED",
             "error_code": "MACHINE_STATE_NOT_COMMITTED",
             "repair_attempted": False,
             "presentation_provider_outcome": "NOT_CALLED",
@@ -669,6 +856,21 @@ def _hold_result(
             "usage_status": "UNKNOWN",
         },
     )
+    technical_hold = failed_stage != "intake_gate"
+    if technical_hold:
+        result.machine_receipt["reason_category"] = "TECHNICAL_EXECUTION_HOLD"
+        result.machine_receipt["technical_state_contract_version"] = "mrc-technical-execution-state-1.0"
+        result.closure_card["Reason"] = (
+            f"稿件完整性：PASS。机器裁决未形成；失败阶段：{failed_stage}。"
+            if options.output_language == "zh"
+            else f"Manuscript completeness: PASS. No machine adjudication was formed; failed stage: {failed_stage}."
+        )
+        result.closure_card["Next permitted action"] = (
+            "修复技术问题或由用户重新发起一次新任务。"
+            if options.output_language == "zh"
+            else "Repair the technical issue or start one new task explicitly."
+        )
+    return result
 
 
 def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = None) -> AnalysisResult:
@@ -682,6 +884,9 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
     attempts: list[tuple[str, int]] = []
     current_stage = "created"
     current_timeout = 0.0
+    current_provider = "NOT_CONFIGURED"
+    current_model = "NOT_CONFIGURED"
+    current_reasoning = "default"
 
     def on_attempt(number: int) -> None:
         attempts.append((current_stage, number))
@@ -689,8 +894,33 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             "provider.attempt",
             phase=sink.phase.value,
             stage=current_stage,
+            provider=current_provider,
+            model=current_model,
+            reasoning_option=current_reasoning,
             attempt=number,
             timeout_seconds=current_timeout,
+            max_transient_retries=0,
+            retry_decision="STOP_NO_AUTOMATIC_RETRY",
+        )
+
+    def emit_provider_result(stage_receipt: Mapping[str, Any]) -> None:
+        physical = stage_receipt.get("physical_request_receipts", [])
+        final = physical[-1] if isinstance(physical, list) and physical else {}
+        sink.emit(
+            "provider.result",
+            phase=sink.phase.value,
+            stage=stage_receipt.get("stage"),
+            provider=stage_receipt.get("provider"),
+            model=stage_receipt.get("model"),
+            reasoning_option=stage_receipt.get("reasoning_option"),
+            attempt=final.get("physical_attempt_number"),
+            timeout_seconds=stage_receipt.get("stage_timeout_seconds"),
+            max_transient_retries=0,
+            retry_decision=final.get("retry_decision", "STOP_NO_AUTOMATIC_RETRY"),
+            provider_outcome=stage_receipt.get("provider_outcome"),
+            http_status=final.get("http_status"),
+            error_class=final.get("error_class"),
+            usage_status=final.get("usage_status"),
         )
 
     try:
@@ -724,7 +954,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                 harness_state=initial_harness,
                 run_status=_status(
                     machine_status="HOLD",
-                    presentation_status="HOLD",
+                    presentation_status="NOT_STARTED",
                     terminal_status="HOLD",
                     recoverability="NONE",
                     machine_provider_outcome="NOT_CALLED",
@@ -740,7 +970,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                 },
                 presentation_receipt={
                     "transaction_version": PRESENTATION_TRANSACTION_VERSION,
-                    "status": "HOLD",
+                    "status": "NOT_STARTED",
                     "repair_attempted": False,
                     "presentation_provider_outcome": "NOT_CALLED",
                 },
@@ -749,7 +979,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             sink.complete(
                 verdict="UNASSESSED",
                 machine_status="HOLD",
-                presentation_status="HOLD",
+                presentation_status="NOT_STARTED",
                 terminal_status="HOLD",
                 usage={},
             )
@@ -788,8 +1018,15 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                 )
                 return result
 
+        if options.transient_retries != 0:
+            raise ProviderConfigurationError(
+                "automatic full-request retries are disabled; transient_retries must be zero"
+            )
         config = load_provider_config(options.provider, model=options.model)
         reasoning_option = validate_reasoning_option(config.name, config.model, options.reasoning_option)
+        current_provider = config.name
+        current_model = config.model
+        current_reasoning = reasoning_option
         sink.transition(RunPhase.REQUESTING_MODEL)
 
         current_stage = "coverage"
@@ -840,7 +1077,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
         coverage_client = ChatCompletionClient(
             config,
             timeout_seconds=current_timeout,
-            max_transient_retries=options.transient_retries,
+            max_transient_retries=0,
             on_attempt=on_attempt,
         )
         try:
@@ -851,18 +1088,23 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                 schema=COVERAGE_JSON_SCHEMA,
                 schema_name="mrc_whole_manuscript_coverage",
                 budget=coverage_budget,
+                stage="coverage",
             )
         except ProviderRequestError as exc:
-            provider_receipts.append(
-                _provider_receipt_failed(
+            stage_receipt = _provider_receipt_failed(
                     "coverage",
                     exc,
+                    provider=config.name,
+                    requested_model=config.model,
+                    reasoning_option=reasoning_option,
                     attempt_count=sum(stage == "coverage" for stage, _number in attempts),
                     timeout_seconds=current_timeout,
-                    max_transient_retries=options.transient_retries,
                     budget=coverage_budget.as_dict(),
+                    schema_digest=schema_sha256(COVERAGE_JSON_SCHEMA),
+                    coverage_digest=None,
                 )
-            )
+            provider_receipts.append(stage_receipt)
+            emit_provider_result(stage_receipt)
             sink.item_completed(coverage_item, "coverage_request", status="hold", error_code="PROVIDER_REQUEST_FAILED")
             sink.transition(RunPhase.VALIDATING)
             result = _hold_result(
@@ -881,16 +1123,20 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             sink.complete(verdict="UNASSESSED", terminal_status="HOLD", usage=result.usage)
             return result
 
-        provider_receipts.append(
-            _provider_receipt_completed(
+        stage_receipt = _provider_receipt_completed(
                 "coverage",
                 coverage_completion,
+                provider=config.name,
+                requested_model=config.model,
+                reasoning_option=reasoning_option,
                 attempt_count=sum(stage == "coverage" for stage, _number in attempts),
                 timeout_seconds=current_timeout,
-                max_transient_retries=options.transient_retries,
                 budget=coverage_budget.as_dict(),
+                schema_digest=schema_sha256(COVERAGE_JSON_SCHEMA),
+                coverage_digest=None,
             )
-        )
+        provider_receipts.append(stage_receipt)
+        emit_provider_result(stage_receipt)
         try:
             coverage = validate_coverage(parse_model_json(coverage_completion.content))
         except (ModelContractError, HarnessContractError) as exc:
@@ -944,6 +1190,8 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             sink.complete(verdict="UNASSESSED", terminal_status="HOLD", usage=result.usage)
             return result
 
+        adjudication_schema = build_adjudication_json_schema(coverage)
+        frozen_coverage_digest = canonical_digest(coverage)
         adjudication_messages = build_adjudication_messages(
             document.text,
             manuscript_identity=state["current_manuscript_identity"],
@@ -994,7 +1242,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
         adjudication_client = ChatCompletionClient(
             config,
             timeout_seconds=current_timeout,
-            max_transient_retries=options.transient_retries,
+            max_transient_retries=0,
             on_attempt=on_attempt,
         )
         try:
@@ -1002,21 +1250,27 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                 adjudication_client,
                 adjudication_messages,
                 reasoning_option=reasoning_option,
-                schema=ADJUDICATION_JSON_SCHEMA,
+                schema=adjudication_schema,
                 schema_name="mrc_root_cause_adjudication",
                 budget=adjudication_budget,
+                stage="adjudication",
+                coverage_digest=frozen_coverage_digest,
             )
         except ProviderRequestError as exc:
-            provider_receipts.append(
-                _provider_receipt_failed(
+            stage_receipt = _provider_receipt_failed(
                     "adjudication",
                     exc,
+                    provider=config.name,
+                    requested_model=config.model,
+                    reasoning_option=reasoning_option,
                     attempt_count=sum(stage == "adjudication" for stage, _number in attempts),
                     timeout_seconds=current_timeout,
-                    max_transient_retries=options.transient_retries,
                     budget=adjudication_budget.as_dict(),
+                    schema_digest=schema_sha256(adjudication_schema),
+                    coverage_digest=frozen_coverage_digest,
                 )
-            )
+            provider_receipts.append(stage_receipt)
+            emit_provider_result(stage_receipt)
             sink.item_completed(adjudication_item, "adjudication_request", status="hold", error_code="PROVIDER_REQUEST_FAILED")
             sink.transition(RunPhase.VALIDATING)
             result = _hold_result(
@@ -1035,18 +1289,38 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             sink.complete(verdict="UNASSESSED", terminal_status="HOLD", usage=result.usage)
             return result
 
-        provider_receipts.append(
-            _provider_receipt_completed(
+        stage_receipt = _provider_receipt_completed(
                 "adjudication",
                 adjudication_completion,
+                provider=config.name,
+                requested_model=config.model,
+                reasoning_option=reasoning_option,
                 attempt_count=sum(stage == "adjudication" for stage, _number in attempts),
                 timeout_seconds=current_timeout,
-                max_transient_retries=options.transient_retries,
                 budget=adjudication_budget.as_dict(),
+                schema_digest=schema_sha256(adjudication_schema),
+                coverage_digest=frozen_coverage_digest,
             )
-        )
+        provider_receipts.append(stage_receipt)
+        emit_provider_result(stage_receipt)
         try:
             envelope = parse_model_json(adjudication_completion.content)
+            try:
+                validate_json_schema_contract(
+                    envelope,
+                    adjudication_schema,
+                    contract_version=ADJUDICATION_CONTRACT_VERSION,
+                )
+            except HarnessContractError as schema_error:
+                diagnostic = getattr(schema_error, "contract_receipt", None)
+                if isinstance(diagnostic, dict) and isinstance(envelope.get("material_root_causes"), list):
+                    candidate_diagnostic = candidate_exact_set_receipt(coverage, envelope)
+                    diagnostic["candidate_exact_set_contract_version"] = candidate_diagnostic.pop(
+                        "contract_version"
+                    )
+                    diagnostic.update(candidate_diagnostic)
+                raise
+            validate_candidate_exact_set(coverage, envelope)
             finite_state = validate_adjudication_binding(envelope, coverage)
             model_state = validate_model_state(finite_state)
         except (ModelContractError, HarnessContractError) as exc:
@@ -1073,7 +1347,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             sink.complete(
                 verdict="UNASSESSED",
                 machine_status="HOLD",
-                presentation_status="HOLD",
+                presentation_status="NOT_STARTED",
                 terminal_status="HOLD",
                 usage=result.usage,
             )
@@ -1115,7 +1389,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
             sink.complete(
                 verdict="UNASSESSED",
                 machine_status="HOLD",
-                presentation_status="HOLD",
+                presentation_status="NOT_STARTED",
                 terminal_status="HOLD",
                 usage=result.usage,
             )
@@ -1178,6 +1452,7 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                     attempt=number,
                     timeout_seconds=current_timeout,
                     max_transient_retries=0,
+                    retry_decision="STOP_NO_AUTOMATIC_RETRY",
                 )
 
             presentation_result = repair_presentation(
@@ -1190,9 +1465,15 @@ def analyze_manuscript(options: RunOptions, *, event_sink: EventSink | None = No
                 timeout_seconds=options.timeout_seconds,
                 on_attempt=on_presentation_attempt,
             )
-            presentation_provider_receipt = _presentation_provider_receipt(presentation_result)
+            presentation_provider_receipt = _presentation_provider_receipt(
+                presentation_result,
+                provider=config.name,
+                requested_model=config.model,
+                reasoning_option=reasoning_option,
+            )
             if presentation_provider_receipt is not None:
                 provider_receipts.append(presentation_provider_receipt)
+                emit_provider_result(presentation_provider_receipt)
             sink.item_completed(
                 presentation_item,
                 "presentation_repair",

@@ -34,13 +34,13 @@ coverage、重新读取全文的 root-cause adjudication、coverage SHA-256 绑�
 10. **Optional interpretation**：核心裁决冻结后才进行第三次可选调用，生成中文公开解读，
     不参与重判。
 
-## 请求等待与重试合同
+## 请求等待与不可重发合同
 
 Kimi 的 coverage 默认单次等待 300 秒，adjudication 与 interpretation 默认 900 秒；其他
-已登记组合默认 180 秒。CLI 的显式 `--timeout` 可覆盖这些默认值。socket/read timeout
-意味着本地不知道服务端是否仍在运行，因此不会自动重发整项任务；只有明确返回的 HTTP
-429、502、503、504 才允许最多两次有限重试。这一合同不改变输出 token 余量，也不通过
-截短全文或压缩裁决来换取更短运行时间。
+已登记组合默认 180 秒。CLI 的显式 `--timeout` 可覆盖这些默认值。coverage、adjudication、
+presentation repair 与 interpretation 均只允许一次物理 HTTP attempt；429、502、503、504、
+socket/read timeout 与网络状态不明均不得自动重发全文。这一合同不改变输出 token 余量，
+也不通过截短全文或压缩裁决来换取更短运行时间。
 
 ## 私有状态与公开收据
 

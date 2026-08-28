@@ -2,6 +2,14 @@
 
 [English](CHANGELOG.md)
 
+## Standalone 0.6.3——Provider 合同与状态完整性修复
+
+- coverage、adjudication、presentation repair 与 interpretation 的每个逻辑调用只允许一次物理 HTTP 请求，不再自动重发全文。
+- 增加 bounded 物理请求收据、provider capability 元数据、canonical schema 哈希与未知潜在计费表达。
+- 在模型可见 prompt 中嵌入 canonical coverage schema 和本轮动态 adjudication schema；支持 strict schema 的 provider 继续使用 API 级交付。
+- 增加动态 candidate cardinality/enum 绑定、独立 exact-set verifier，以及 missing/extra/duplicate bounded 诊断。
+- 在 runtime 与 GUI 中分离 machine HOLD 和 presentation HOLD，不改变 Skill `0.2.1` 的学术判断合同。
+
 ## 0.2.1——公开发布候选
 
 - 为无版本、`0.1.x`、`0.2.0` 和 `0.2.1` 收据增加统一的版本族验证。

@@ -107,12 +107,12 @@ class StandaloneRuntimeTests(unittest.TestCase):
             side_effect=socket.timeout("read timed out"),
         ) as mocked, patch("standalone.providers.time.sleep"):
             with self.assertRaisesRegex(ProviderRequestError, "not automatically resent"):
-                ChatCompletionClient(config, timeout_seconds=900, max_transient_retries=2).complete(
+                ChatCompletionClient(config, timeout_seconds=900, max_transient_retries=0).complete(
                     [{"role": "user", "content": "test"}]
                 )
         self.assertEqual(1, mocked.call_count)
 
-    def test_only_explicit_http_overload_statuses_are_retried(self) -> None:
+    def test_http_overload_statuses_are_never_automatically_retried(self) -> None:
         config = ProviderConfig(
             name="kimi",
             model="kimi-k2.6",
@@ -120,22 +120,6 @@ class StandaloneRuntimeTests(unittest.TestCase):
             api_key="local",
             key_variable="TEST_KEY",
         )
-
-        class FakeResponse:
-            def __enter__(self) -> "FakeResponse":
-                return self
-
-            def __exit__(self, *_args: object) -> None:
-                return None
-
-            def read(self) -> bytes:
-                return json.dumps(
-                    {
-                        "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
-                        "usage": {},
-                        "model": "kimi-k2.6",
-                    }
-                ).encode("utf-8")
 
         overload = urllib.error.HTTPError(
             "https://api.moonshot.cn/v1/chat/completions",
@@ -146,12 +130,14 @@ class StandaloneRuntimeTests(unittest.TestCase):
         )
         with patch(
             "standalone.providers.urllib.request.urlopen",
-            side_effect=[overload, FakeResponse()],
+            side_effect=overload,
         ) as mocked, patch("standalone.providers.time.sleep"):
-            ChatCompletionClient(config, max_transient_retries=2).complete(
-                [{"role": "user", "content": "test"}]
-            )
-        self.assertEqual(2, mocked.call_count)
+            with self.assertRaises(ProviderRequestError) as raised:
+                ChatCompletionClient(config, max_transient_retries=0).complete(
+                    [{"role": "user", "content": "test"}]
+                )
+        self.assertEqual(1, mocked.call_count)
+        self.assertEqual("UNKNOWN", raised.exception.request_receipts[0]["provider_outcome"])
 
         unregistered = urllib.error.HTTPError(
             "https://api.moonshot.cn/v1/chat/completions",
@@ -165,7 +151,7 @@ class StandaloneRuntimeTests(unittest.TestCase):
             side_effect=unregistered,
         ) as mocked, patch("standalone.providers.time.sleep"):
             with self.assertRaisesRegex(ProviderRequestError, "status 500"):
-                ChatCompletionClient(config, max_transient_retries=2).complete(
+                ChatCompletionClient(config, max_transient_retries=0).complete(
                     [{"role": "user", "content": "test"}]
                 )
         self.assertEqual(1, mocked.call_count)
@@ -526,7 +512,9 @@ class StandaloneRuntimeTests(unittest.TestCase):
         self.assertEqual("UNASSESSED", result.closure_card["Verdict"])
         self.assertEqual("HOLD", runtime["machine_status"])
         self.assertEqual("SUCCEEDED", runtime["machine_provider_outcome"])
-        self.assertEqual(7, runtime["usage_calls"][1]["total_tokens"])
+        self.assertEqual(7, runtime["usage_calls"][0]["total_tokens"])
+        self.assertEqual(2, runtime["physical_request_attempt_count"])
+        self.assertEqual(1, runtime["unknown_potential_charge_attempt_count"])
         self.assertEqual(0, runtime["presentation_repair_call_count"])
 
     def test_stable_prior_stop_receipt_skips_provider(self) -> None:

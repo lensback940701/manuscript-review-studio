@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -16,6 +17,9 @@ INTAKE_CONTRACT_VERSION = "mrc-manuscript-intake-1.0"
 COVERAGE_CONTRACT_VERSION = "mrc-whole-manuscript-coverage-1.0"
 ADJUDICATION_CONTRACT_VERSION = "mrc-root-cause-adjudication-1.0"
 CONTRADICTION_GATE_VERSION = "mrc-cross-stage-contradiction-gate-1.0"
+SCHEMA_DELIVERY_CONTRACT_VERSION = "mrc-canonical-schema-delivery-1.0"
+DYNAMIC_ADJUDICATION_SCHEMA_VERSION = "mrc-dynamic-adjudication-schema-1.0"
+CANDIDATE_EXACT_SET_CONTRACT_VERSION = "mrc-candidate-exact-set-1.0"
 
 COVERAGE_DIMENSIONS = (
     "contribution",
@@ -45,6 +49,22 @@ DIMENSION_KEYS = frozenset({"dimension", "applicability", "assessed", "status"})
 
 class HarnessContractError(ValueError):
     """Raised when a deterministic or model harness contract fails closed."""
+
+
+class SchemaContractError(HarnessContractError):
+    """Raised with a bounded path/key receipt for one canonical JSON schema failure."""
+
+    def __init__(self, message: str, receipt: Mapping[str, Any]) -> None:
+        super().__init__(message)
+        self.contract_receipt = dict(receipt)
+
+
+class CandidateSetContractError(HarnessContractError):
+    """Raised when adjudication does not account for the frozen candidate set exactly once."""
+
+    def __init__(self, receipt: Mapping[str, Any]) -> None:
+        super().__init__("adjudication must account for every coverage candidate exactly once")
+        self.contract_receipt = dict(receipt)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,9 +293,287 @@ COVERAGE_JSON_SCHEMA: dict[str, Any] = {
 }
 
 
+ADJUDICATION_REQUIRED_KEYS = [
+    "coverage_digest_sha256",
+    "material_root_causes",
+    "evidence_hold_codes",
+    "submission_hold_codes",
+    "protected",
+    "parked_opportunities",
+    "lite_suggestions",
+]
+
+
+_ADJUDICATION_SCHEMA_TEMPLATE: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ADJUDICATION_REQUIRED_KEYS,
+    "properties": {
+        "coverage_digest_sha256": {"type": "string"},
+        "material_root_causes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "observed",
+                    "locatable",
+                    "dimension",
+                    "style_only",
+                    "hold_only",
+                    "verification_only",
+                    "expected_benefit_exceeds_risk",
+                    "scope",
+                ],
+                "properties": {
+                    "observed": {"type": "boolean"},
+                    "locatable": {"type": "boolean"},
+                    "dimension": {"type": "string", "enum": []},
+                    "style_only": {"type": "boolean"},
+                    "hold_only": {"type": "boolean"},
+                    "verification_only": {"type": "boolean"},
+                    "expected_benefit_exceeds_risk": {"type": "boolean"},
+                    "scope": {"type": "string", "enum": ["local", "central"]},
+                },
+            },
+        },
+        "evidence_hold_codes": {
+            "type": "array",
+            "items": {"type": "string", "enum": sorted(EVIDENCE_HOLD_CODES)},
+        },
+        "submission_hold_codes": {
+            "type": "array",
+            "items": {"type": "string", "enum": sorted(SUBMISSION_HOLD_CODES)},
+        },
+        "protected": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {"type": "string", "maxLength": 240},
+        },
+        "parked_opportunities": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {"type": "string", "maxLength": 240},
+        },
+        "lite_suggestions": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["Direction", "Why it matters", "What to protect"],
+                "properties": {
+                    "Direction": {"type": "string", "maxLength": 240},
+                    "Why it matters": {"type": "string", "maxLength": 240},
+                    "What to protect": {"type": "string", "maxLength": 240},
+                },
+            },
+        },
+    },
+}
+
+
+def canonical_json_text(value: Mapping[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def schema_sha256(schema: Mapping[str, Any]) -> str:
+    return hashlib.sha256(canonical_json_text(schema).encode("utf-8")).hexdigest()
+
+
+def _candidate_ids(coverage: Mapping[str, Any]) -> list[str]:
+    observed = coverage.get("root_cause_candidate_dimensions", [])
+    if not isinstance(observed, list) or any(item not in COVERAGE_DIMENSIONS for item in observed):
+        raise HarnessContractError("coverage root-cause candidate dimensions are invalid")
+    if len(set(observed)) != len(observed):
+        raise HarnessContractError("coverage root-cause candidate dimensions contain duplicates")
+    order = {dimension: index for index, dimension in enumerate(COVERAGE_DIMENSIONS)}
+    return sorted(observed, key=order.__getitem__)
+
+
+def build_adjudication_json_schema(coverage: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind the canonical adjudication schema to this run's frozen candidate identities."""
+
+    candidates = _candidate_ids(coverage)
+    schema = deepcopy(_ADJUDICATION_SCHEMA_TEMPLATE)
+    causes = schema["properties"]["material_root_causes"]
+    causes["minItems"] = len(candidates)
+    causes["maxItems"] = len(candidates)
+    causes["items"]["properties"]["dimension"]["enum"] = candidates
+    return schema
+
+
+def schema_delivery_block(schema: Mapping[str, Any], *, contract_version: str) -> str:
+    canonical = canonical_json_text(schema)
+    return (
+        f"Canonical schema delivery contract: {SCHEMA_DELIVERY_CONTRACT_VERSION}\n"
+        f"Stage contract version: {contract_version}\n"
+        f"Canonical schema SHA-256: {schema_sha256(schema)}\n"
+        f"Canonical JSON schema: {canonical}\n"
+        "The schema is authoritative: preserve every required key, reject additional keys, use exact "
+        "JSON types and enum values, and obey every array cardinality."
+    )
+
+
+def _schema_failure_receipt(
+    schema: Mapping[str, Any],
+    *,
+    contract_version: str,
+    path: str,
+    observed: Any,
+    error_kind: str,
+    root_schema_sha256: str | None = None,
+) -> dict[str, Any]:
+    required = schema.get("required", []) if isinstance(schema.get("required"), list) else []
+    observed_keys = sorted(observed) if isinstance(observed, Mapping) else []
+    return {
+        "contract_version": contract_version,
+        "schema_sha256": root_schema_sha256 or schema_sha256(schema),
+        "required_keys": sorted(str(item) for item in required),
+        "observed_keys": [str(item) for item in observed_keys],
+        "missing_keys": sorted(str(item) for item in set(required).difference(observed_keys)),
+        "extra_keys": sorted(str(item) for item in set(observed_keys).difference(required)),
+        "failed_path": path,
+        "error_kind": error_kind,
+    }
+
+
+def validate_json_schema_contract(
+    value: Any,
+    schema: Mapping[str, Any],
+    *,
+    contract_version: str,
+    path: str = "$",
+    root_schema_sha256: str | None = None,
+) -> None:
+    """Validate the finite JSON-schema subset used by the two model stages."""
+
+    expected_type = schema.get("type")
+    root_digest = root_schema_sha256 or schema_sha256(schema)
+    if expected_type == "object":
+        if not isinstance(value, Mapping):
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="type",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} must be an object", receipt)
+        required = set(schema.get("required", []))
+        observed_keys = set(value)
+        if observed_keys != required:
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="key_set",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} key set mismatch", receipt)
+        properties = schema.get("properties", {})
+        for key in sorted(required):
+            validate_json_schema_contract(
+                value[key],
+                properties[key],
+                contract_version=contract_version,
+                path=f"{path}.{key}",
+                root_schema_sha256=root_digest,
+            )
+        return
+    if expected_type == "array":
+        if not isinstance(value, list):
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="type",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} must be an array", receipt)
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if (isinstance(minimum, int) and len(value) < minimum) or (
+            isinstance(maximum, int) and len(value) > maximum
+        ):
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="cardinality",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} has invalid cardinality", receipt)
+        item_schema = schema.get("items")
+        if isinstance(item_schema, Mapping):
+            for index, item in enumerate(value):
+                validate_json_schema_contract(
+                    item,
+                    item_schema,
+                    contract_version=contract_version,
+                    path=f"{path}[{index}]",
+                    root_schema_sha256=root_digest,
+                )
+        return
+    if expected_type == "boolean" and not isinstance(value, bool):
+        receipt = _schema_failure_receipt(
+            schema, contract_version=contract_version, path=path, observed=value, error_kind="type",
+            root_schema_sha256=root_digest,
+        )
+        raise SchemaContractError(f"{path} must be boolean", receipt)
+    if expected_type == "string":
+        if not isinstance(value, str):
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="type",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} must be a string", receipt)
+        allowed = schema.get("enum")
+        if isinstance(allowed, list) and value not in allowed:
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="enum",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} enum mismatch", receipt)
+        maximum_length = schema.get("maxLength")
+        if isinstance(maximum_length, int) and len(value) > maximum_length:
+            receipt = _schema_failure_receipt(
+                schema, contract_version=contract_version, path=path, observed=value, error_kind="max_length",
+                root_schema_sha256=root_digest,
+            )
+            raise SchemaContractError(f"{path} exceeds maximum length", receipt)
+
+
+def candidate_exact_set_receipt(
+    coverage: Mapping[str, Any], model_state: Mapping[str, Any]
+) -> dict[str, Any]:
+    required = _candidate_ids(coverage)
+    observed: list[str] = []
+    for cause in model_state.get("material_root_causes", []):
+        if not isinstance(cause, Mapping):
+            continue
+        if isinstance(cause.get("dimension"), str):
+            observed.append(str(cause["dimension"]))
+        else:
+            affects = cause.get("affects", [])
+            if isinstance(affects, list):
+                observed.extend(str(item) for item in affects if isinstance(item, str))
+    duplicates = sorted({item for item in observed if observed.count(item) > 1})
+    required_set = set(required)
+    observed_set = set(observed)
+    return {
+        "contract_version": CANDIDATE_EXACT_SET_CONTRACT_VERSION,
+        "required_candidates": required,
+        "observed_candidates": sorted(observed),
+        "missing_candidates": sorted(required_set.difference(observed_set)),
+        "extra_candidates": sorted(observed_set.difference(required_set)),
+        "duplicate_candidates": duplicates,
+    }
+
+
+def validate_candidate_exact_set(coverage: Mapping[str, Any], model_state: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = candidate_exact_set_receipt(coverage, model_state)
+    if any(receipt[key] for key in ("missing_candidates", "extra_candidates", "duplicate_candidates")):
+        raise CandidateSetContractError(receipt)
+    if len(receipt["observed_candidates"]) != len(receipt["required_candidates"]):
+        raise CandidateSetContractError(receipt)
+    return receipt
+
+
 def validate_coverage(value: Mapping[str, Any]) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != set(COVERAGE_JSON_SCHEMA["required"]):
-        raise HarnessContractError("coverage output key set mismatch")
+    validate_json_schema_contract(
+        value,
+        COVERAGE_JSON_SCHEMA,
+        contract_version=COVERAGE_CONTRACT_VERSION,
+    )
     if value["coverage_contract_version"] != COVERAGE_CONTRACT_VERSION:
         raise HarnessContractError("coverage contract version mismatch")
     for field in ("manuscript_identity_confirmed", "full_span_covered"):
@@ -348,7 +646,22 @@ def coverage_is_complete(coverage: Mapping[str, Any]) -> bool:
 
 
 def canonical_digest(value: Mapping[str, Any]) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    normalized: Mapping[str, Any] = value
+    if value.get("coverage_contract_version") == COVERAGE_CONTRACT_VERSION:
+        copy = deepcopy(dict(value))
+        if isinstance(copy.get("root_cause_candidate_dimensions"), list):
+            copy["root_cause_candidate_dimensions"] = _candidate_ids(copy)
+        if isinstance(copy.get("dimensions"), list):
+            order = {dimension: index for index, dimension in enumerate(COVERAGE_DIMENSIONS)}
+            copy["dimensions"] = sorted(
+                copy["dimensions"],
+                key=lambda row: order.get(row.get("dimension"), len(order)) if isinstance(row, Mapping) else len(order),
+            )
+        for field in ("evidence_hold_codes", "submission_hold_codes"):
+            if isinstance(copy.get(field), list):
+                copy[field] = sorted(copy[field])
+        normalized = copy
+    payload = canonical_json_text(normalized)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -366,14 +679,11 @@ def validate_adjudication_binding(value: Mapping[str, Any], coverage: Mapping[st
 
 def validate_cross_stage_consistency(coverage: Mapping[str, Any], model_state: Mapping[str, Any]) -> None:
     candidates = list(coverage["root_cause_candidate_dimensions"])
-    occurrences: list[str] = []
     for cause in model_state["material_root_causes"]:
         affects = cause["affects"]
         if any(item not in COVERAGE_DIMENSIONS for item in affects):
             raise HarnessContractError("adjudication root cause references an unknown coverage dimension")
-        occurrences.extend(affects)
-    if set(occurrences) != set(candidates) or len(occurrences) != len(set(occurrences)):
-        raise HarnessContractError("adjudication must account for every coverage candidate exactly once")
+    validate_candidate_exact_set(coverage, model_state)
     if not set(coverage["evidence_hold_codes"]).issubset(model_state["evidence_hold_codes"]):
         raise HarnessContractError("adjudication silently dropped a coverage evidence hold")
     if not set(coverage["submission_hold_codes"]).issubset(model_state["submission_hold_codes"]):
@@ -402,6 +712,9 @@ def harness_receipt(
         "coverage_contract_version": COVERAGE_CONTRACT_VERSION,
         "adjudication_contract_version": ADJUDICATION_CONTRACT_VERSION,
         "contradiction_gate_version": CONTRADICTION_GATE_VERSION,
+        "schema_delivery_contract_version": SCHEMA_DELIVERY_CONTRACT_VERSION,
+        "dynamic_adjudication_schema_version": DYNAMIC_ADJUDICATION_SCHEMA_VERSION,
+        "candidate_exact_set_contract_version": CANDIDATE_EXACT_SET_CONTRACT_VERSION,
         "coverage_completed": False,
         "coverage_dimension_count": 0,
         "coverage_digest_sha256": None,

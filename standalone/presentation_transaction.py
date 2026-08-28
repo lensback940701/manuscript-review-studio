@@ -1,4 +1,4 @@
-"""Native presentation transaction for Manuscript Revision Closure 0.6.2.
+"""Native presentation transaction for Manuscript Revision Closure 0.6.3.
 
 The machine adjudication remains authoritative.  This module receives only the
 finite model-authored fields that are already eligible for the public Closure
@@ -24,6 +24,7 @@ from .harness import (
     estimate_message_tokens,
     provider_context_limit,
     provider_output_ceiling,
+    schema_sha256,
 )
 from .providers import (
     ChatCompletionClient,
@@ -209,6 +210,11 @@ def aggregate_usage_status(
 
 
 def provider_outcome_from_error(error: BaseException) -> str:
+    receipts = getattr(error, "request_receipts", ())
+    if receipts and isinstance(receipts[-1], Mapping):
+        outcome = receipts[-1].get("provider_outcome")
+        if outcome in {"SUCCEEDED", "REJECTED", "UNKNOWN", "NOT_CALLED"}:
+            return str(outcome)
     text = str(error).casefold()
     ambiguous = (
         "server-side execution status is unknown",
@@ -725,6 +731,7 @@ def repair_presentation(
     )
     config = load_provider_config(provider, model=model)
     messages = build_presentation_repair_messages(source, target_language=target_language)
+    repair_schema = _repair_schema(source)
     budget = presentation_budget(
         messages,
         source,
@@ -786,9 +793,12 @@ def repair_presentation(
             messages,
             reasoning_option=reasoning_option,
             json_mode=True,
-            json_schema=_repair_schema(source),
+            json_schema=repair_schema,
             json_schema_name="mrc_presentation_repair",
             max_output_tokens=budget.requested_max_output_tokens,
+            stage="presentation_repair",
+            schema_sha256=schema_sha256(repair_schema),
+            coverage_digest_sha256=coverage_digest_sha256,
         )
     except ProviderRequestError as exc:
         outcome = provider_outcome_from_error(exc)
@@ -805,6 +815,7 @@ def repair_presentation(
             "usage": {},
             "usage_status": "UNKNOWN",
             "actual_attempt_count": len(attempts),
+            "physical_request_receipts": [dict(item) for item in exc.request_receipts],
             "machine_state_digest_after_sha256": machine_digest_before,
             "machine_state_parity": True,
         }
@@ -831,6 +842,7 @@ def repair_presentation(
         "usage": dict(completion.usage),
         "usage_status": usage_status(completion.usage),
         "actual_attempt_count": len(attempts),
+        "physical_request_receipts": [dict(item) for item in completion.request_receipts],
         "finish_reason": completion.finish_reason,
     }
     if completion.finish_reason == "length":

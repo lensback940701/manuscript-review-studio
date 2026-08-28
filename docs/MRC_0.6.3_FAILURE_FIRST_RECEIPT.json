@@ -1,0 +1,47 @@
+{
+  "receipt_version": "mrc-0.6.3-failure-first-receipt-1.0",
+  "contract_sha256": "F4045490AFD925BD1E53C25261DB8952388C7DD2D3D23986EE40604E8D3986B3",
+  "baseline": {
+    "branch": "main",
+    "commit": "32240b62344cf504e39342967b6b2ae158abab8f",
+    "tree": "ec436a0a12390d2c983bdd4cbf5e6adf365b964d",
+    "standalone_version": "0.6.2",
+    "skill_version": "0.2.1",
+    "exe_bytes": 10610188,
+    "exe_sha256": "1A39BF97B82806D32B673AF5ACDAF9898EB9A798236F426B63BB135992DDBB14"
+  },
+  "failure_first": {
+    "executed_at_local": "2026-08-28T13:55:59+08:00",
+    "command": "PYTHONDONTWRITEBYTECODE=1 python -B -m unittest discover -s tests -p test_mrc_0_6_3_provider_contract_state.py -v",
+    "exit_code": 1,
+    "tests_run": 5,
+    "failures": 5,
+    "unexpected_errors": 0,
+    "observations": {
+      "transient_then_timeout_physical_attempts": 2,
+      "default_max_transient_retries": 2,
+      "deepseek_canonical_schema_and_hash_in_prompt": false,
+      "dynamic_adjudication_schema_available": false,
+      "machine_hold_gui_route_available": false
+    }
+  },
+  "repaired_result": {
+    "executed_at_local": "2026-08-28T14:22:28+08:00",
+    "command": "PYTHONDONTWRITEBYTECODE=1 python -B -m unittest discover -s tests -p test_mrc_0_6_3_provider_contract_state.py -v",
+    "exit_code": 0,
+    "tests_run": 12,
+    "failures": 0,
+    "errors": 0,
+    "observations": {
+      "transient_then_timeout_physical_attempts": 1,
+      "default_max_transient_retries": 0,
+      "deepseek_canonical_schema_and_hash_in_prompt": true,
+      "dynamic_adjudication_schema_available": true,
+      "candidate_exact_set_receipt_groups": 5,
+      "machine_hold_gui_route_available": true,
+      "candidate_natural_language_authoritative": false,
+      "real_api_calls": 0,
+      "real_manuscripts_read": 0
+    }
+  }
+}
