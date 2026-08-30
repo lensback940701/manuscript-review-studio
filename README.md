@@ -1,20 +1,24 @@
-# Manuscript Review Harness
+# Manuscript Review Studio
 
 [中文说明](README.zh-CN.md)
 
-**Not another prompt-to-API wrapper. This repository embeds a contract-bound review harness around the model.**
+**Open the Windows app, choose a model, add your complete manuscript, and get a rigorous second opinion—without installing Codex or setting up an agent.**
 
-Most LLM review tools send a manuscript and a prompt, then display whatever comes back. Manuscript Review Harness turns that single call into an inspectable review procedure: whole-manuscript coverage, independent root-cause adjudication, deterministic cross-stage checks, strict response schemas, bounded presentation, and attempt/usage receipts. The result is a stricter and more reproducible review path that can be calibrated to an author's requested rigor and to supplied target-journal sample papers.
+Manuscript Review Studio is a genuinely standalone desktop application for authors. It launches its own local interface, reads the manuscript you select, and connects directly to DeepSeek, Kimi, or Gemini with your own API key. Codex and ChatGPT are not required to run the Windows application.
 
-It supports DeepSeek, Kimi, and Gemini through a local Windows interface, while retaining the evidence-bound Manuscript Revision Closure contract as a Codex skill. The harness is designed to make review behavior more disciplined, customizable, and auditable than a bare API call—not to guarantee that a model is correct, replace peer review, or predict journal acceptance.
+Instead of returning an endless list of generic improvements, it is built to answer the question authors actually face: should this manuscript stop general revision, receive one bounded round, or reopen substantive revision? You can use a standard review, set a reviewer personality and strictness, or add a folder of target-journal sample papers so the review better reflects the journal context and your own priorities.
 
-## Why an embedded harness matters
+## What authors get
 
-- **Two review passes, not one answer.** A coverage pass maps the full manuscript; an independent adjudication pass must revisit the manuscript, account for every candidate, and may recover grounded issues the first pass missed.
-- **A real STOP gate.** `STOP_REVISING` requires affirmative sufficiency across contribution, whole-paper argument, theory, methods, evidence, and section coherence. An empty issue list alone cannot produce a stop decision.
-- **Provider responses are constrained and checked.** Dynamic schemas are linted before dispatch, returned objects are validated locally, and contradictory or incomplete states fail closed instead of being polished into a confident result.
-- **Review settings are explicit.** Standard, reviewer-personality/strictness, and target-journal benchmark modes let the author define the review posture without silently changing the evidence ceiling.
-- **Privacy and spending boundaries are visible.** Every manuscript transmission requires fresh consent bound to file hash, provider, and model; attempts, usage, uncertain charges, and technical failures remain distinguishable.
+- **A real standalone Windows program.** Launch the local interface directly; no Codex installation, command-line agent, or development environment is required to use the packaged application.
+- **A whole-manuscript decision.** The app evaluates the paper as a complete argument instead of commenting on isolated paragraphs.
+- **Review that can fit your situation.** Choose standard review, reviewer personality/strictness, or target-journal sample mode.
+- **A clear revision endpoint.** Receive a bounded verdict, the most important revision directions, protected strengths, and separate evidence or submission reminders.
+- **Control before transmission.** The app shows the selected file, provider, and model and asks for fresh confirmation before sending manuscript text.
+
+Under the surface, the application embeds a multi-stage review harness rather than relying on one free-form API reply. That machinery is there to make the model review more disciplined and internally consistent; authors do not need to understand or configure the technical details.
+
+Manuscript Review Studio does not guarantee that a model is correct, replace peer review, or predict journal acceptance. It provides a more structured and transparent AI second opinion.
 
 ## Relationship to OpenAI Codex
 

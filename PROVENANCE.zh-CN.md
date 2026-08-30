@@ -2,7 +2,7 @@
 
 [English](PROVENANCE.md)
 
-Manuscript Review Harness 是经过本地审计的 Manuscript Revision Closure `0.2.1` Skill 与 standalone `0.6.4` 运行层的公开多模式封装版。更小的纯 Skill 版本单独维护在 [`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure)。
+Manuscript Review Studio 是经过本地审计的 Manuscript Revision Closure `0.2.1` Skill 与 standalone `0.6.4` 运行层的公开多模式封装版。更小的纯 Skill 版本单独维护在 [`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure)。
 
 面向 Codex 的 Skill 封装结构和部分架构边界参考了官方
 [`openai/codex`](https://github.com/openai/codex) 仓库的 commit

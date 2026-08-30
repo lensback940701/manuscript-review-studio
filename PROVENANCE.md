@@ -2,7 +2,7 @@
 
 [中文说明](PROVENANCE.zh-CN.md)
 
-Manuscript Review Harness is the public, multimode packaging of the locally audited Manuscript Revision Closure `0.2.1` skill and standalone `0.6.4` runtime. The smaller Skill-only distribution is maintained separately at [`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure).
+Manuscript Review Studio is the public, multimode packaging of the locally audited Manuscript Revision Closure `0.2.1` skill and standalone `0.6.4` runtime. The smaller Skill-only distribution is maintained separately at [`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure).
 
 The Codex-facing package structure and selected architectural boundaries were
 informed by the official [`openai/codex`](https://github.com/openai/codex)
