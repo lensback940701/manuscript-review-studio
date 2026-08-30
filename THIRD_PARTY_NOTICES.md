@@ -11,5 +11,6 @@
   into this program or executable, and this independent project is not endorsed
   by OpenAI.
 
-The upstream Manuscript Revision Closure project remains licensed under the
-Apache License 2.0 included in `LICENSE`.
+The Skill-only Manuscript Revision Closure distribution is maintained at
+[`lensback940701/manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure)
+under the Apache License 2.0 included in `LICENSE`.

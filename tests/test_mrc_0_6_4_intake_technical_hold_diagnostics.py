@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import hashlib
 import json
 import os
 import tempfile
@@ -790,33 +789,6 @@ class Mrc064FailureFirstTests(unittest.TestCase):
                 self.assertTrue(receipt.complete_structure)
                 self.assertTrue(receipt.format_advisory_only)
                 self.assertTrue(all(not item["blocking"] for item in receipt.advisories))
-
-    def test_15_baoshan_fixture_is_read_only_parser_acceptance(self) -> None:
-        fixture_drive = "".join(("G", ":"))
-        path = (
-            Path(fixture_drive + chr(92))
-            / "Agents Projects"
-            / "8 云南咖啡转型"
-            / "writing_startup_2026-08-09"
-            / "outputs"
-            / "qa"
-            / "71_Q_b_corrected_package_v8.md"
-        )
-        before = path.read_bytes()
-        before_hash = hashlib.sha256(before).hexdigest()
-        with patch("standalone.providers.urllib.request.urlopen") as network:
-            receipt = analyze_intake_structure(before.decode("utf-8"))
-        after = path.read_bytes()
-        self.assertEqual(88539, len(before))
-        self.assertEqual(
-            "b0ebd8e1f17fd8a20c9a8f0f7179579e8cfd63f4aeead8831339187ac21e2732",
-            before_hash,
-        )
-        self.assertEqual(before_hash, hashlib.sha256(after).hexdigest())
-        self.assertTrue(receipt.complete_structure)
-        self.assertEqual(23, receipt.heading_count)
-        self.assertNotIn("HEADING_NUMBERING_STYLE_REVIEW", receipt.advisory_codes)
-        network.assert_not_called()
 
     def test_16_technical_receipt_allowed_fields_and_cross_field_truth_table(self) -> None:
         base = {

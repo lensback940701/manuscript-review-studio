@@ -33,6 +33,7 @@ def base_state() -> dict:
         "bounded_scope": False,
         "current_manuscript_identity": "synthetic-adversarial-rc2",
         "material_root_causes": [],
+        "affirmative_stop_gate_passed": True,
         "evidence_holds": [],
         "submission_holds": [],
         "external_holds": [],

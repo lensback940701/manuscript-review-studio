@@ -266,8 +266,8 @@ class InterpretationTests(unittest.TestCase):
                 "significance": "便于复现与核验。",
             },
             {
-                "area": "71_Q_b",
-                "observation": "问答包与正文形成互补。",
+                "area": "Appendix-A",
+                "observation": "附录与正文形成互补。",
                 "significance": "支撑了核心结论。",
             },
         ]
@@ -283,7 +283,7 @@ class InterpretationTests(unittest.TestCase):
         self.assertEqual("贡献与创新层级", validated["assessment_dimensions"][1]["dimension"])
         self.assertIn("3.2", validated["selective_findings"][0]["area"])
         self.assertIn("3.1", validated["selective_findings"][1]["area"])
-        self.assertIn("71_Q_b", validated["selective_findings"][2]["area"])
+        self.assertIn("Appendix-A", validated["selective_findings"][2]["area"])
 
     def test_markdown_renderer_and_saved_result_receipt_extraction(self) -> None:
         markdown = render_interpretation_markdown(VALID_INTERPRETATION)

@@ -1,17 +1,32 @@
-# 稿件修订截止判断
+# Manuscript Review Harness：不是 API 套壳，而是一套内置审稿执行框架
 
 [English](README.md)
 
-这是一个受证据边界约束的 Codex Skill，用于判断一篇完整学术稿件是否应当停止通用 AI 改稿。
+**普通工具把“稿件 + 提示词”交给 API；这个仓库把一整套可核验的审稿 harness 嵌进了模型调用过程。**
+
+Manuscript Review Harness 将一次不可见、难复核的模型回答拆成整稿覆盖、独立根因裁决、跨阶段确定性门禁、严格结构化输出、有限展示和 attempt/usage 回执。它让 DeepSeek、Kimi、Gemini 的审阅过程比单纯 API 调用更严格、更可复现、更可审计，也能依据作者要求的严格度与用户提供的目标期刊样本论文进行定制化校准，从而给出更贴近期刊语境和作者真实需求的修改方向。
+
+仓库提供本地 Windows 图形界面，同时保留受证据边界约束的 Manuscript Revision Closure Codex Skill。它的目标不是保证模型永远正确、替代同行评审或预测接收，而是用明确合同把模型约束在更可靠、更透明的审稿流程里。
+
+## 为什么“内置 harness”比普通 API 调用更进一步
+
+- **不是一次回答，而是两次相互约束的审阅。** coverage 先扫描整稿，独立 adjudication 再重读全文、逐项复核，并可恢复第一阶段漏掉但可定位、有依据的实质问题。
+- **STOP 必须被肯定性证明。** `STOP_REVISING` 需要贡献、全稿论证、理论、方法、证据与章节连贯性均形成明确充分性判断；“没有列出问题”本身不能机械导向停止。
+- **模型输出必须过硬门禁。** 动态 schema 在外发前递归检查，返回对象在本地校验；矛盾、缺字段或跨阶段不一致会 fail closed，不会被包装成看似自信的结论。
+- **审稿姿态可以明确配置。** 标准模式、审稿人格/严格度模式、目标期刊样本模式分别承载不同需求，同时不静默抬高证据上限。
+- **隐私与费用边界看得见。** 每次全文外发都要重新确认，并绑定文件哈希、provider 与 model；物理请求次数、usage、潜在未知费用与技术失败彼此分开记录。
 
 ## 与 OpenAI Codex 的关系
 
 本项目是独立维护的社区项目，不是 OpenAI 官方产品。Codex Skill 结构和部分架构边界参考了官方
 [`openai/codex`](https://github.com/openai/codex) 仓库，具体参考 commit 为
 [`d5caceccb1ee5bf94c081b995575ce4860e0912b`](https://github.com/openai/codex/commit/d5caceccb1ee5bf94c081b995575ce4860e0912b)。
-本仓库及其 standalone EXE 均未复制 OpenAI Codex 源文件。详见[发布来源说明](PROVENANCE.zh-CN.md)与[第三方说明](THIRD_PARTY_NOTICES.md)。
+本仓库及其 standalone EXE 均未复制 OpenAI Codex 源文件，也不代表 OpenAI 的认可、隶属或背书。可参见
+[Codex 官方开源说明](https://learn.chatgpt.com/docs/open-source)、[发布来源说明](PROVENANCE.zh-CN.md)与[第三方说明](THIRD_PARTY_NOTICES.md)。
+仅包含核心 Skill 的轻量仓库继续保留在
+[`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure)。
 
-它针对 AI 辅助学术写作中常见的失败循环：每次检查都会生成下一轮修改，每次修补又引出新的问题，稿件始终无法到达一个可以说明理由的停止点。本 Skill 只读评估整篇当前稿件，给出紧凑的修订截止判断，但不向用户公开完整的内部审稿意见。
+其中的修订截止 Skill 针对 AI 辅助学术写作中常见的失败循环：每次检查都会生成下一轮修改，每次修补又引出新的问题，稿件始终无法到达一个可以说明理由的停止点。本 Skill 只读评估整篇当前稿件，给出紧凑的修订截止判断，但不向用户公开完整的内部审稿意见。
 
 当前发布候选版本：`0.2.1`
 

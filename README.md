@@ -1,8 +1,20 @@
-# Manuscript Revision Closure
+# Manuscript Review Harness
 
 [中文说明](README.zh-CN.md)
 
-An evidence-bound Codex skill for deciding when a complete academic manuscript should stop general AI revision.
+**Not another prompt-to-API wrapper. This repository embeds a contract-bound review harness around the model.**
+
+Most LLM review tools send a manuscript and a prompt, then display whatever comes back. Manuscript Review Harness turns that single call into an inspectable review procedure: whole-manuscript coverage, independent root-cause adjudication, deterministic cross-stage checks, strict response schemas, bounded presentation, and attempt/usage receipts. The result is a stricter and more reproducible review path that can be calibrated to an author's requested rigor and to supplied target-journal sample papers.
+
+It supports DeepSeek, Kimi, and Gemini through a local Windows interface, while retaining the evidence-bound Manuscript Revision Closure contract as a Codex skill. The harness is designed to make review behavior more disciplined, customizable, and auditable than a bare API call—not to guarantee that a model is correct, replace peer review, or predict journal acceptance.
+
+## Why an embedded harness matters
+
+- **Two review passes, not one answer.** A coverage pass maps the full manuscript; an independent adjudication pass must revisit the manuscript, account for every candidate, and may recover grounded issues the first pass missed.
+- **A real STOP gate.** `STOP_REVISING` requires affirmative sufficiency across contribution, whole-paper argument, theory, methods, evidence, and section coherence. An empty issue list alone cannot produce a stop decision.
+- **Provider responses are constrained and checked.** Dynamic schemas are linted before dispatch, returned objects are validated locally, and contradictory or incomplete states fail closed instead of being polished into a confident result.
+- **Review settings are explicit.** Standard, reviewer-personality/strictness, and target-journal benchmark modes let the author define the review posture without silently changing the evidence ceiling.
+- **Privacy and spending boundaries are visible.** Every manuscript transmission requires fresh consent bound to file hash, provider, and model; attempts, usage, uncertain charges, and technical failures remain distinguishable.
 
 ## Relationship to OpenAI Codex
 
@@ -12,9 +24,13 @@ by the official [`openai/codex`](https://github.com/openai/codex) repository,
 specifically reference commit
 [`d5caceccb1ee5bf94c081b995575ce4860e0912b`](https://github.com/openai/codex/commit/d5caceccb1ee5bf94c081b995575ce4860e0912b).
 No OpenAI Codex source file is copied into this repository or its standalone executable.
-See [Release Provenance](PROVENANCE.md) and [Third-party notices](THIRD_PARTY_NOTICES.md).
+The repository is neither endorsed by nor affiliated with OpenAI. See the
+[official Codex open-source documentation](https://learn.chatgpt.com/docs/open-source),
+[Release Provenance](PROVENANCE.md), and [Third-party notices](THIRD_PARTY_NOTICES.md).
+The smaller, Skill-only distribution remains available as
+[`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure).
 
-The skill addresses a recurring failure mode in AI-assisted academic writing: every new review generates another round of edits, each repair creates a different concern, and the manuscript never reaches a defensible stopping point. It performs a read-only whole-manuscript assessment and returns a compact closure decision without publishing the detailed internal review.
+The embedded closure skill addresses a recurring failure mode in AI-assisted academic writing: every new review generates another round of edits, each repair creates a different concern, and the manuscript never reaches a defensible stopping point. It performs a read-only whole-manuscript assessment and returns a compact closure decision without publishing the detailed internal review.
 
 Current release candidate: `0.2.1`
 

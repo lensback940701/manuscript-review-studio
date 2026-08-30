@@ -1,7 +1,7 @@
-Manuscript Revision Closure
+Manuscript Review Harness
 Copyright 2026 Lensback's Lab
 
-This product includes a Codex skill instruction package and a standard-library
-Python contract helper. No manuscript, project evidence, or third-party dataset
-is included in this distribution.
+This product includes the Manuscript Revision Closure Codex skill package and a
+standalone review harness. No manuscript, project evidence, or third-party
+dataset is included in this source distribution.
 
