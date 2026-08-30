@@ -105,7 +105,8 @@ class ReleaseDocumentationTests(unittest.TestCase):
                 or "配图" in path.parts
                 or path.name.endswith("_GOAL.zh-CN.md")
                 or path.resolve() == Path(__file__).resolve()
-                or path.suffix.casefold() in {".png", ".jpg", ".jpeg", ".jfif"}
+                or "test0829" in path.parts
+                or path.suffix.casefold() in {".png", ".jpg", ".jpeg", ".jfif", ".pdf", ".docx"}
             ):
                 continue
             content = path.read_text(encoding="utf-8", errors="ignore")

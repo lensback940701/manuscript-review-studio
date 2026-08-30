@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import io
 import json
@@ -10,6 +11,7 @@ import unittest
 import urllib.error
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -26,6 +28,7 @@ from standalone.assessor import (  # noqa: E402
 from standalone.document_reader import normalize_semantic_text, read_document  # noqa: E402
 from standalone.events import EventSink  # noqa: E402
 from standalone.harness import (  # noqa: E402
+    AFFIRMATIVE_STOP_DIMENSIONS,
     COVERAGE_CONTRACT_VERSION,
     COVERAGE_DIMENSIONS,
     canonical_digest,
@@ -42,10 +45,21 @@ from standalone.providers import (  # noqa: E402
     reasoning_profile,
 )
 from standalone import providers as providers_module  # noqa: E402
+from standalone import native_dialogs  # noqa: E402
 
 
 VALID_MODEL_STATE = {
     "material_root_causes": [],
+    "affirmative_sufficiency": [
+        {
+            "dimension": dimension,
+            "assessed": True,
+            "affirmative_sufficiency": True,
+            "unresolved_material_concern": False,
+            "sufficiency_reason_code": "AFFIRMATIVE_MANUSCRIPT_SUPPORT",
+        }
+        for dimension in AFFIRMATIVE_STOP_DIMENSIONS
+    ],
     "evidence_hold_codes": [],
     "submission_hold_codes": [],
     "protected": ["保持论点上限和可见的替代解释。"],
@@ -55,10 +69,20 @@ VALID_MODEL_STATE = {
 
 COVERAGE_STATE = {
     "coverage_contract_version": COVERAGE_CONTRACT_VERSION,
+    "whole_manuscript_basis": "SUFFICIENT",
+    "basis_reason_codes": ["SUFFICIENT_SUBSTANTIVE_WHOLE_MANUSCRIPT"],
+    "basis_explanation": "The supplied text contains sufficient substantive whole-manuscript material.",
     "manuscript_identity_confirmed": True,
     "full_span_covered": True,
     "dimensions": [
-        {"dimension": dimension, "applicability": "APPLICABLE", "assessed": True, "status": "CLEAR"}
+        {
+            "dimension": dimension,
+            "applicability": "APPLICABLE",
+            "assessed": True,
+            "status": "CLEAR",
+            "affirmative_sufficiency": True,
+            "sufficiency_reason_code": "AFFIRMATIVE_MANUSCRIPT_SUPPORT",
+        }
         for dimension in COVERAGE_DIMENSIONS
     ],
     "root_cause_candidate_dimensions": [],
@@ -86,12 +110,58 @@ def long_manuscript(marker: str = "stable manuscript marker") -> str:
 
 
 class StandaloneRuntimeTests(unittest.TestCase):
+    def test_samples_folder_picker_uses_pointer_safe_win32_signatures(self) -> None:
+        class FakeFunction:
+            def __init__(self, callback):
+                self.callback = callback
+                self.argtypes = None
+                self.restype = None
+
+            def __call__(self, *args):
+                return self.callback(*args)
+
+        expected = ROOT.resolve()
+        browse = FakeFunction(lambda _browse_info: 0x1234567887654321)
+
+        def resolve_path(_pidl, buffer):
+            if browse.restype is not ctypes.c_void_p:
+                return 0
+            buffer.value = str(expected)
+            return 1
+
+        get_path = FakeFunction(resolve_path)
+        co_initialize = FakeFunction(lambda _reserved: 0)
+        free = FakeFunction(lambda _pidl: None)
+        fake_windll = SimpleNamespace(
+            shell32=SimpleNamespace(
+                SHBrowseForFolderW=browse,
+                SHGetPathFromIDListW=get_path,
+            ),
+            ole32=SimpleNamespace(
+                CoInitialize=co_initialize,
+                CoTaskMemFree=free,
+            ),
+        )
+        with patch.object(native_dialogs.ctypes, "windll", fake_windll), patch.object(
+            native_dialogs.os, "name", "nt"
+        ), patch.object(
+            native_dialogs.subprocess,
+            "run",
+            return_value=SimpleNamespace(stdout=""),
+        ):
+            selected = native_dialogs.pick_samples_folder()
+
+        self.assertEqual(expected, selected)
+        self.assertIs(ctypes.c_void_p, browse.restype)
+        self.assertIs(native_dialogs.wintypes.BOOL, get_path.restype)
+        self.assertEqual([ctypes.c_void_p], free.argtypes)
+
     def test_provider_stage_timeouts_give_kimi_long_adjudication_window(self) -> None:
         stage_timeout = getattr(providers_module, "provider_stage_timeout_seconds")
-        self.assertEqual(300.0, stage_timeout("kimi", "coverage"))
+        self.assertEqual(900.0, stage_timeout("kimi", "coverage"))
         self.assertEqual(900.0, stage_timeout("kimi", "adjudication"))
         self.assertEqual(900.0, stage_timeout("kimi", "interpretation"))
-        self.assertEqual(180.0, stage_timeout("deepseek", "adjudication"))
+        self.assertEqual(600.0, stage_timeout("deepseek", "adjudication"))
         self.assertEqual(77.0, stage_timeout("kimi", "adjudication", override=77.0))
 
     def test_socket_timeout_is_not_automatically_retried(self) -> None:
@@ -385,14 +455,20 @@ class StandaloneRuntimeTests(unittest.TestCase):
                 [{"role": "user", "content": "test"}], reasoning_option="disabled"
             )
 
-    def test_unconfirmed_input_fails_closed_without_api_or_key(self) -> None:
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+    def test_missing_explicit_transmission_consent_fails_closed_without_api(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"DEEPSEEK_API_KEY": "mock"}, clear=True
+        ):
             path = Path(directory) / "paper.md"
             path.write_text(long_manuscript(), encoding="utf-8")
             result = analyze_manuscript(RunOptions(manuscript_path=path))
             self.assertEqual("UNASSESSED", result.closure_card["Verdict"])
             self.assertFalse(result.api_called)
-            self.assertIsNone(result.provider)
+            self.assertEqual(
+                "USER_PROVIDER_TRANSMISSION_NOT_AUTHORIZED",
+                result.minimal_receipt["reason_category"],
+            )
+            self.assertEqual("NOT_AUTHORIZED", result.consent_receipt["status"])
 
     def test_kimi_analysis_uses_separate_coverage_and_adjudication_timeouts(self) -> None:
         completions = iter(
@@ -422,14 +498,15 @@ class StandaloneRuntimeTests(unittest.TestCase):
                     model="kimi-k2.6",
                     confirm_complete_current_manuscript=True,
                     manuscript_identity="paper-v1",
+                    provider_transmission_consent=True,
                 ),
                 event_sink=EventSink(jsonl_path=event_path),
             )
             events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
         self.assertEqual("STOP_REVISING", result.closure_card["Verdict"])
-        self.assertEqual([300.0, 900.0], observed_timeouts)
+        self.assertEqual([900.0, 900.0], observed_timeouts)
         attempt_timeouts = [event["timeout_seconds"] for event in events if event["type"] == "provider.attempt"]
-        self.assertEqual([300.0, 900.0], attempt_timeouts)
+        self.assertEqual([900.0, 900.0], attempt_timeouts)
 
     def test_valid_model_state_is_deterministically_closed(self) -> None:
         completions = iter(
@@ -457,6 +534,7 @@ class StandaloneRuntimeTests(unittest.TestCase):
                     manuscript_path=path,
                     confirm_complete_current_manuscript=True,
                     manuscript_identity="paper-v1",
+                    provider_transmission_consent=True,
                 ),
                 event_sink=EventSink(jsonl_path=event_path),
             )
@@ -505,6 +583,7 @@ class StandaloneRuntimeTests(unittest.TestCase):
                     manuscript_path=path,
                     provider="kimi",
                     confirm_complete_current_manuscript=True,
+                    provider_transmission_consent=True,
                 )
             )
         self.assertEqual(2, mocked.call_count)
@@ -532,6 +611,7 @@ class StandaloneRuntimeTests(unittest.TestCase):
                 "current_artifact_sha256": document.artifact_sha256,
                 "current_semantic_content_sha256": document.semantic_content_sha256,
                 "material_root_causes": [],
+                "affirmative_stop_gate_passed": True,
                 "evidence_hold_codes": [],
                 "submission_hold_codes": [],
                 "protected": [],

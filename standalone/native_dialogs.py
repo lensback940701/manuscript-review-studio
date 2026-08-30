@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
 from ctypes import wintypes
 from pathlib import Path
 
@@ -110,9 +111,84 @@ def pick_interpretation_destination() -> Path | None:
     )
 
 
+def pick_samples_folder() -> Path | None:
+    """Open native folder browser dialog for selecting sample papers folder."""
+    if os.name != "nt":
+        return None
+    # 1. Try Windows shell SHBrowseForFolderW with COM initialization
+    try:
+        ole32 = ctypes.windll.ole32
+        ole32.CoInitialize.argtypes = [ctypes.c_void_p]
+        ole32.CoInitialize.restype = ctypes.c_long
+        ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+        ole32.CoTaskMemFree.restype = None
+        ole32.CoInitialize(None)
+
+        class BROWSEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("hwndOwner", wintypes.HWND),
+                ("pidlRoot", ctypes.c_void_p),
+                ("pszDisplayName", wintypes.LPWSTR),
+                ("lpszTitle", wintypes.LPCWSTR),
+                ("ulFlags", wintypes.UINT),
+                ("lpfn", ctypes.c_void_p),
+                ("lParam", wintypes.LPARAM),
+                ("iImage", ctypes.c_int),
+            ]
+
+        BIF_RETURNONLYFSDIRS = 0x0001
+        BIF_NEWDIALOGSTYLE = 0x0040
+        BIF_NONEWFOLDERBUTTON = 0x0200
+        buffer = ctypes.create_unicode_buffer(32_768)
+        bi = BROWSEINFOW()
+        bi.pszDisplayName = ctypes.cast(buffer, wintypes.LPWSTR)
+        bi.lpszTitle = "选择目标期刊样本论文文件夹 / Select Target Journal Sample Papers Folder"
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_NONEWFOLDERBUTTON
+        shell32 = ctypes.windll.shell32
+        browse = shell32.SHBrowseForFolderW
+        browse.argtypes = [ctypes.POINTER(BROWSEINFOW)]
+        browse.restype = ctypes.c_void_p
+        get_path = shell32.SHGetPathFromIDListW
+        get_path.argtypes = [ctypes.c_void_p, wintypes.LPWSTR]
+        get_path.restype = wintypes.BOOL
+        pidl = browse(ctypes.byref(bi))
+        if pidl:
+            try:
+                if get_path(pidl, buffer):
+                    val = buffer.value.strip()
+                    if val:
+                        return Path(val).resolve()
+            finally:
+                ole32.CoTaskMemFree(pidl)
+    except Exception:
+        pass
+
+    # 2. Fallback to PowerShell FolderBrowserDialog
+    try:
+        ps_cmd = (
+            "[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms')|Out-Null; "
+            "$f=New-Object System.Windows.Forms.FolderBrowserDialog; "
+            "$f.Description='选择目标期刊样本论文文件夹 / Select Target Journal Sample Papers Folder'; "
+            "$f.ShowNewFolderButton=$false; "
+            "if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){ $f.SelectedPath }"
+        )
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = res.stdout.strip()
+        if output and Path(output).is_dir():
+            return Path(output).resolve()
+    except Exception:
+        pass
+
+    return None
+
+
 def hide_console_window() -> None:
     """Hide the console only for the double-click GUI route."""
-
     if os.name != "nt":
         return
     kernel32 = ctypes.windll.kernel32

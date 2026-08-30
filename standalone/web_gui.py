@@ -19,15 +19,23 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .assessor import RunOptions, analyze_manuscript
+from .assessor import ProviderTransmissionConsent, RunOptions, analyze_manuscript, prepare_provider_transmission_consent
 from .cli import load_prior_receipt
+from .document_reader import read_document
 from .events import EventSink
 from .interpretation import (
     InterpretationContractError,
     generate_interpretation,
     render_interpretation_markdown,
 )
+from .journal_benchmark import (
+    evaluate_sample_relevance_prompt,
+    ingest_sample_papers,
+    parse_sample_relevance_response,
+)
 from .native_dialogs import (
+    pick_samples_folder,
+
     hide_console_window,
     pick_interpretation_destination,
     pick_manuscript,
@@ -37,8 +45,10 @@ from .native_dialogs import (
 from .pricing import calculate_task_cost, exchange_rate_or_none, price_with_fallback
 from .providers import (
     PROVIDERS,
+    ChatCompletionClient,
     ProviderRequestError,
     list_provider_models,
+    load_provider_config,
     provider_stage_timeout_seconds,
     reasoning_profile,
     validate_reasoning_option,
@@ -52,12 +62,19 @@ def reduce_gui_terminal_state(
     machine_status: str | None,
     presentation_status: str | None,
     *,
+    terminal_status: str | None = None,
     configuration_failed: bool = False,
 ) -> str:
     """Apply the public machine-first terminal truth table."""
 
     if configuration_failed:
         return "failed"
+    if (
+        terminal_status == "CANCELED"
+        or machine_status == "CANCELED"
+        or presentation_status == "CANCELED"
+    ):
+        return "canceled"
     if machine_status != "SUCCEEDED":
         return "completed_with_machine_hold"
     if presentation_status == "HOLD":
@@ -113,9 +130,15 @@ class GuiState:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     selected_manuscript: str = ""
     selected_prior_receipt: str = ""
+    selected_samples_dir: str = ""
+    selected_mode: str = "standard"
+    selected_strictness: str = "moderate"
+    selected_journal_name: str = ""
+    selected_journal_scope: str = ""
     timeline: list[dict[str, Any]] = field(default_factory=list)
     _started_at: float | None = None
     _seen_terminal_keys: set[str] = field(default_factory=set)
+    _consent_tokens: dict[str, dict[str, Any]] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def snapshot(self) -> dict[str, Any]:
@@ -134,6 +157,11 @@ class GuiState:
                 "timeline": deepcopy(self.timeline),
                 "selected_manuscript": self.selected_manuscript,
                 "selected_prior_receipt": self.selected_prior_receipt,
+                "selected_samples_dir": self.selected_samples_dir,
+                "selected_mode": self.selected_mode,
+                "selected_strictness": self.selected_strictness,
+                "selected_journal_name": self.selected_journal_name,
+                "selected_journal_scope": self.selected_journal_scope,
                 "providers": _provider_public_status(),
             }
 
@@ -143,6 +171,8 @@ class GuiState:
                 self.selected_manuscript = str(path)
             elif kind == "prior_receipt":
                 self.selected_prior_receipt = str(path)
+            elif kind == "samples_dir":
+                self.selected_samples_dir = str(path)
             else:
                 raise ValueError("unknown GUI path kind")
 
@@ -348,6 +378,71 @@ class GuiState:
             self.interpretation_error = message
             self._append_locked(self.phase, self.message, {"error": message})
 
+    def canceled(self, message: str) -> None:
+        with self._lock:
+            self.busy = False
+            self.phase = "canceled"
+            self.message = message
+            self.error = None
+            self.presentation_error = None
+            self.machine_error = None
+            self._append_locked(self.phase, message, {"canceled": True})
+
+    def prepare_consent(self, manuscript_path: str, provider: str, model: str) -> dict[str, Any]:
+        path = Path(manuscript_path).resolve()
+        document = read_document(path)
+        token = "mrc_consent_" + uuid.uuid4().hex
+        with self._lock:
+            self._consent_tokens[token] = {
+                "path": str(path),
+                "artifact_sha256": document.artifact_sha256,
+                "provider": provider,
+                "model": model,
+            }
+        return {
+            "consent_token": token,
+            "path": str(path),
+            "artifact_sha256": document.artifact_sha256,
+            "provider": provider,
+            "model": model,
+        }
+
+    def consume_consent(
+        self,
+        token: Any,
+        confirmed: Any,
+        *,
+        manuscript: str,
+        provider: str,
+        model: str,
+    ) -> bool | ProviderTransmissionConsent:
+        if not isinstance(token, str) or not token:
+            return False
+        with self._lock:
+            stored = self._consent_tokens.pop(token, None)
+        if not stored or not isinstance(stored, dict):
+            return False
+        path = str(Path(manuscript).resolve())
+        try:
+            document = read_document(Path(manuscript))
+        except Exception:
+            return False
+        if (
+            stored.get("path") != path
+            or stored.get("provider") != provider
+            or stored.get("model") != model
+            or stored.get("artifact_sha256") != document.artifact_sha256
+        ):
+            return False
+        if confirmed is not True:
+            return False
+        return prepare_provider_transmission_consent(
+            artifact_sha256=document.artifact_sha256,
+            provider=provider,
+            model=model,
+            confirmed=True,
+        )
+
     def fail(self, message: str) -> None:
         with self._lock:
             self.busy = False
@@ -452,6 +547,46 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlsplit(self.path).path
         try:
+            if path == "/api/pick-samples-dir":
+                selected = pick_samples_folder()
+                if selected is not None:
+                    self.server.gui_state.select_path("samples_dir", selected)
+                self._json(HTTPStatus.OK, {"path": str(selected) if selected else ""})
+                return
+            if path == "/api/check-samples-relevance":
+                try:
+                    payload = self._read_json()
+                    manuscript_path = payload.get("manuscript_path")
+                    samples_dir = payload.get("samples_dir")
+                    provider = payload.get("provider", "deepseek")
+                    model = payload.get("model")
+                    reasoning = payload.get("reasoning_option", "default")
+                    journal_name = str(payload.get("target_journal_name", ""))
+                    journal_scope = str(payload.get("target_journal_scope", ""))
+                    if not manuscript_path:
+                        raise ValueError("请先在上方输入或选择完整当前稿件文件路径")
+                    if not samples_dir:
+                        raise ValueError("请提供目标期刊样本论文文件夹路径")
+                    doc = read_document(Path(manuscript_path))
+                    profile = ingest_sample_papers(Path(samples_dir), target_journal_name=journal_name, target_journal_scope=journal_scope)
+                    messages = evaluate_sample_relevance_prompt(doc.text, profile)
+                    config = load_provider_config(provider, model=model)
+                    client = ChatCompletionClient(config, timeout_seconds=90)
+                    completion = client.complete(messages, reasoning_option=reasoning, json_mode=False)
+                    parsed = parse_sample_relevance_response(completion.content)
+                    self._json(HTTPStatus.OK, {
+                        "rating": parsed.rating,
+                        "score": parsed.score,
+                        "explanation": parsed.explanation,
+                        "methodological_alignment": parsed.methodological_alignment,
+                        "theoretical_alignment": parsed.theoretical_alignment,
+                        "recommendation": parsed.recommendation,
+                        "is_suitable": parsed.is_suitable,
+                        "sample_papers_count": profile.sample_papers_count,
+                    })
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
             if path == "/api/pick-manuscript":
                 selected = pick_manuscript()
                 if selected is not None:
@@ -490,6 +625,24 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(model, str) or not model.strip() or len(model) > 120:
                     raise ValueError("reasoning request model must be concise text")
                 self._json(HTTPStatus.OK, reasoning_profile(str(payload["provider"]), model.strip()))
+                return
+            if path == "/api/prepare-consent":
+                payload = self._read_json()
+                if set(payload) != {"manuscript_path", "provider", "model"}:
+                    raise ValueError("consent preparation requires file, provider, and model")
+                manuscript = payload.get("manuscript_path")
+                provider = payload.get("provider")
+                model = payload.get("model")
+                if not isinstance(manuscript, str) or not manuscript.strip():
+                    raise ValueError("请选择稿件文件 / Select a manuscript file")
+                if provider not in PROVIDERS:
+                    raise ValueError("provider must be deepseek, kimi, or gemini")
+                if not isinstance(model, str) or not model.strip() or len(model) > 120:
+                    raise ValueError("model must be concise text")
+                prepared = self.server.gui_state.prepare_consent(
+                    manuscript.strip(), str(provider), model.strip()
+                )
+                self._json(HTTPStatus.OK, prepared)
                 return
             if path == "/api/analyze":
                 payload = self._read_json()
@@ -556,6 +709,9 @@ def _analysis_worker(state: GuiState, payload: dict[str, Any]) -> None:
         allowed = {
             "manuscript_path", "provider", "model", "reasoning_option", "language",
             "identity", "confirmed_complete", "prior_receipt_path", "generate_interpretation",
+            "consent_token", "consent_confirmed",
+            "mode", "strictness_level", "target_journal_name", "target_journal_scope",
+            "sample_papers_dir", "sample_relevance_override",
         }
         if set(payload).difference(allowed):
             raise ValueError("analysis request contains unknown fields")
@@ -591,12 +747,44 @@ def _analysis_worker(state: GuiState, payload: dict[str, Any]) -> None:
         if not isinstance(reasoning, str) or len(reasoning) > 20:
             raise ValueError("reasoning_option must be concise text")
         selected_reasoning = validate_reasoning_option(provider, selected_model_for_contract, reasoning)
+        consent_token = payload.get("consent_token")
+        consent_confirmed = payload.get("consent_confirmed")
+        if consent_token:
+            consent = state.consume_consent(
+                consent_token,
+                consent_confirmed,
+                manuscript=manuscript,
+                provider=provider,
+                model=selected_model_for_contract,
+            )
+        elif confirmed:
+            doc = read_document(Path(manuscript))
+            consent = prepare_provider_transmission_consent(
+                artifact_sha256=doc.artifact_sha256,
+                provider=provider,
+                model=selected_model_for_contract,
+                confirmed=True,
+            )
+        else:
+            consent = False
+        mode = str(payload.get("mode", "standard"))
+        strictness_level = str(payload.get("strictness_level", "moderate"))
+        journal_name = str(payload.get("target_journal_name", ""))
+        journal_scope = str(payload.get("target_journal_scope", ""))
+        samples_dir = payload.get("sample_papers_dir")
+        relevance_override = bool(payload.get("sample_relevance_override", False))
+
         result = analyze_manuscript(
             RunOptions(
                 manuscript_path=Path(manuscript), provider=provider, model=selected_model,
                 reasoning_option=selected_reasoning, output_language=language,
                 manuscript_identity=selected_identity,
                 confirm_complete_current_manuscript=confirmed, prior_receipt=prior,
+                provider_transmission_consent=consent,
+                mode=mode, strictness_level=strictness_level,
+                target_journal_name=journal_name, target_journal_scope=journal_scope,
+                sample_papers_dir=Path(samples_dir) if samples_dir else None,
+                sample_relevance_override=relevance_override,
             ),
             event_sink=sink,
         )
@@ -611,7 +799,14 @@ def _analysis_worker(state: GuiState, payload: dict[str, Any]) -> None:
     gui_route = reduce_gui_terminal_state(
         core_runtime.get("machine_status"),
         core_runtime.get("presentation_status"),
+        terminal_status=core_runtime.get("terminal_status"),
     )
+    if gui_route == "canceled":
+        _attach_task_cost(state, public_result, provider, selected_model)
+        state.canceled(
+            str(public_result.get("closure_card", {}).get("Reason") or "未授权")
+        )
+        return
     if gui_route == "completed_with_machine_hold":
         _attach_task_cost(state, public_result, provider, selected_model)
         machine_receipt = core_runtime.get("machine_receipt", {})
@@ -661,11 +856,31 @@ def _analysis_worker(state: GuiState, payload: dict[str, Any]) -> None:
         )
 
     try:
+        benchmark_prof = None
+        if mode == "journal_benchmark" and samples_dir:
+            try:
+                benchmark_prof = ingest_sample_papers(
+                    Path(samples_dir),
+                    target_journal_name=journal_name,
+                    target_journal_scope=journal_scope,
+                )
+            except Exception:
+                benchmark_prof = None
+
         interpretation = generate_interpretation(
-            Path(manuscript), expected_artifact_sha256=result.artifact_sha256,
+            Path(manuscript),
+            expected_artifact_sha256=result.artifact_sha256,
             manuscript_identity=selected_identity or Path(manuscript).name,
-            public_result=public_result, provider=provider, model=selected_model,
-            reasoning_option=selected_reasoning, on_attempt=on_interpretation_attempt,
+            public_result=public_result,
+            provider=provider,
+            model=selected_model,
+            reasoning_option=selected_reasoning,
+            on_attempt=on_interpretation_attempt,
+            mode=mode,
+            strictness_level=strictness_level,
+            target_journal_name=journal_name,
+            target_journal_scope=journal_scope,
+            benchmark_profile=benchmark_prof,
         )
         state.add_status(
             "interpretation_validated", "中文解读已返回并通过十一键合同校验",
@@ -684,6 +899,12 @@ def _analysis_worker(state: GuiState, payload: dict[str, Any]) -> None:
             state.attach_result_field("failed_interpretation_runtime", exc.runtime)
             if public_error == "interpretation is not one JSON object":
                 public_error = "模型未按要求返回单一 JSON 解读对象"
+            elif "key set mismatch" in public_error:
+                public_error = "模型返回的解读 JSON 键集合不符合合同规范"
+            elif "must contain" in public_error:
+                public_error = "模型返回的解读项数量不符合合同规范"
+            elif "must be" in public_error:
+                public_error = "模型返回的解读字段格式不符合合同规范"
         _attach_task_cost(state, public_result, provider, selected_model)
         state.interpretation_fail(public_error)
 
@@ -803,13 +1024,14 @@ def render_html(token: str) -> str:
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{APP_TITLE}</title>
 <style>
-:root{{--bg:#f4f6fb;--panel:#fff;--ink:#182033;--muted:#667085;--line:#d9dfeb;--brand:#3157d5;--brand2:#2443a8;--ok:#137a50;--bad:#b42318;--shadow:0 16px 50px rgba(27,39,78,.12)}}
+:root{{--bg:#f4f6fb;--panel:#fff;--ink:#182033;--muted:#667085;--line:#d9dfeb;--brand:#3157d5;--brand2:#2443a8;--ok:#137a50;--bad:#b42318;--warn:#b54708;--shadow:0 16px 50px rgba(27,39,78,.12)}}
 *{{box-sizing:border-box}}body{{margin:0;background:linear-gradient(135deg,#eef2ff 0,#f8fafc 45%,#eef9f4 100%);color:var(--ink);font-family:"Segoe UI","Microsoft YaHei",sans-serif;min-height:100vh}}
-.wrap{{max-width:1080px;margin:0 auto;padding:34px 22px 60px}}header{{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:22px}}
+.wrap{{max-width:1100px;margin:0 auto;padding:34px 22px 60px}}header{{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:22px}}
 h1{{font-size:30px;margin:0 0 7px;letter-spacing:-.4px}}.subtitle{{color:var(--muted);line-height:1.6}}.badge{{padding:8px 12px;border-radius:999px;background:#e9edff;color:#2949b7;font-size:13px;font-weight:650;white-space:nowrap}}
 .panel{{background:rgba(255,255,255,.94);border:1px solid rgba(217,223,235,.9);border-radius:18px;box-shadow:var(--shadow);padding:24px;margin-bottom:18px}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}.full{{grid-column:1/-1}}label{{display:block;font-weight:650;margin-bottom:7px;font-size:14px}}.hint{{font-weight:400;color:var(--muted);font-size:12px;margin-left:6px}}
-input,select{{width:100%;height:42px;border:1px solid var(--line);border-radius:10px;padding:0 12px;background:#fff;color:var(--ink);font-size:14px;outline:none}}input:focus,select:focus{{border-color:#7790e9;box-shadow:0 0 0 3px rgba(49,87,213,.11)}}
+input,select,textarea{{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:#fff;color:var(--ink);font-size:14px;outline:none;font-family:inherit}}input:focus,select:focus,textarea:focus{{border-color:#7790e9;box-shadow:0 0 0 3px rgba(49,87,213,.11)}}
+input,select{{height:42px}}
 .pathrow{{display:grid;grid-template-columns:1fr auto;gap:9px}}button{{border:0;border-radius:10px;padding:11px 16px;font-weight:650;cursor:pointer;background:#eef1f7;color:#253047}}button:hover{{filter:brightness(.97)}}button.primary{{background:var(--brand);color:#fff}}button.primary:hover{{background:var(--brand2)}}button:disabled{{opacity:.5;cursor:not-allowed}}
 .check{{display:flex;gap:10px;align-items:flex-start;padding:13px;border:1px solid var(--line);border-radius:11px;background:#fafbfe}}.check input{{width:18px;height:18px;margin-top:1px}}.check label{{margin:0;font-weight:500;line-height:1.5}}
 .explain{{margin-top:9px;border-left:3px solid #91a4eb;padding:9px 12px;background:#f7f8ff;border-radius:0 9px 9px 0;color:#475467;font-size:13px;line-height:1.65}}.explain summary{{cursor:pointer;font-weight:650;color:#344054}}
@@ -818,28 +1040,108 @@ input,select{{width:100%;height:42px;border:1px solid var(--line);border-radius:
 .timeline{{list-style:none;margin:14px 0 0;padding:0;max-height:300px;overflow:auto;border-top:1px solid var(--line)}}.timeline li{{display:grid;grid-template-columns:70px 1fr;gap:12px;padding:10px 3px;border-bottom:1px solid #edf0f5;font-size:13px;line-height:1.45}}.timeline .time{{color:#667085;font-variant-numeric:tabular-nums}}.timeline .detail{{color:#667085;font-size:12px;margin-top:3px;word-break:break-word}}.statusnote{{margin-top:10px;color:#667085;font-size:12px}}
 .result{{display:none}}.verdict{{font-size:23px;font-weight:750;margin-bottom:8px}}.reason{{color:#344054;line-height:1.65}}.cols{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}}.box{{background:#f8fafc;border:1px solid var(--line);border-radius:11px;padding:14px}}.box h3{{font-size:14px;margin:0 0 8px}}.box ul{{margin:0;padding-left:20px;line-height:1.65}}pre{{white-space:pre-wrap;word-break:break-word;max-height:380px;overflow:auto;background:#101828;color:#e5e7eb;border-radius:12px;padding:16px;font:12px/1.55 Consolas,monospace}}
 .interpretation{{display:none;margin-top:18px;border-top:1px solid var(--line);padding-top:20px}}.interpretation h2{{font-size:21px;margin:0 0 8px}}.finding{{padding:12px 14px;border:1px solid var(--line);border-radius:10px;margin-top:9px;background:#fff}}.finding b{{display:block;margin-bottom:5px}}.finding .why{{color:#667085;margin-top:5px;font-size:13px}}.interp-error{{display:none;color:#9a6700;background:#fff8dd;border:1px solid #ead58f;border-radius:10px;padding:12px;margin-top:14px}}
-.error{{display:none;color:var(--bad);background:#fff1f0;border:1px solid #f4b8b2;border-radius:10px;padding:12px;margin-top:12px}}footer{{color:var(--muted);font-size:12px;text-align:center;margin-top:20px;line-height:1.6}}
+.error{{display:none;color:var(--bad);background:#fff1f0;border:1px solid #f4b8b2;border-radius:10px;padding:12px;margin-top:12px}}
+.tabs{{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #e2e8f0;padding-bottom:8px}}
+.tab-btn{{border:0;background:transparent;padding:9px 18px;border-radius:9px;font-weight:650;font-size:14px;color:#64748b;cursor:pointer;transition:all .15s}}
+.tab-btn:hover{{background:#f1f5f9;color:#1e293b}}
+.tab-btn.active{{background:#e0e7ff;color:#3730a3}}
+.modepanel{{display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:16px}}
+.modepanel.active{{display:block}}
+.warnbox{{display:none;background:#fffaeb;border:1px solid #fedf89;color:var(--warn);border-radius:10px;padding:13px;margin-top:12px;line-height:1.6;font-size:13.5px}}
+footer{{color:var(--muted);font-size:12px;text-align:center;margin-top:20px;line-height:1.6}}
 @media(max-width:760px){{.grid,.cols{{grid-template-columns:1fr}}.full{{grid-column:auto}}header{{display:block}}.badge{{display:inline-block;margin-top:12px}}}}
 </style></head><body><div class="wrap">
-<header><div><h1>Manuscript Revision Closure</h1><div class="subtitle">只读整稿修订截止判断 · DeepSeek / Kimi / Gemini · Standalone {__version__}</div></div><div class="badge">本地 GUI · 127.0.0.1</div></header>
-<section class="panel"><div class="grid">
-<div class="full"><label>完整当前稿件 <span class="hint">TXT / Markdown / HTML / DOCX / text-layer PDF</span></label><div class="pathrow"><input id="manuscript" readonly placeholder="请选择稿件文件"><button id="pickManuscript">选择文件…</button></div></div>
+<header><div><h1>Manuscript Revision Closure</h1><div class="subtitle">多模式只读整稿修订截止判断 · DeepSeek / Kimi / Gemini · Standalone {__version__}</div></div><div class="badge">本地 GUI · 127.0.0.1</div></header>
+
+<section class="panel">
+<label style="font-size:15px;margin-bottom:10px">审阅模式选择 / Evaluation Mode</label>
+<div class="tabs">
+  <button type="button" class="tab-btn active" id="tabStandard" onclick="switchMode('standard')">模式 1：标准审阅模式</button>
+  <button type="button" class="tab-btn" id="tabStrictness" onclick="switchMode('strictness')">模式 2：性格与尺度模式</button>
+  <button type="button" class="tab-btn" id="tabJournal" onclick="switchMode('journal_benchmark')">模式 3：目标期刊对齐模式</button>
+</div>
+
+<div id="panelStandard" class="modepanel active">
+  <div style="color:#475467;font-size:13.5px;line-height:1.6">
+    <b>标准学术审阅模式</b>：执行全稿十维确定性学术门禁，客观权衡论点充分性与退化风险，无特定人为预设偏置。
+  </div>
+</div>
+
+<div id="panelStrictness" class="modepanel">
+  <div style="margin-bottom:10px;font-weight:650;font-size:14px">请选择审阅裁判的尺度严苛度：</div>
+  <div class="grid">
+    <div>
+      <select id="strictnessLevel">
+        <option value="strict">严厉（Top-tier / 冲顶刊苛求裁判）- 零容忍概念漂移与潜在盲区</option>
+        <option value="moderate" selected>中等（Moderate / 标准同行评审）- 标准学术充分性与退化风险平衡</option>
+        <option value="lenient">宽松（Lenient / 定稿防退化保护）- 强力保护定稿框架，防无休止微调</option>
+      </select>
+    </div>
+    <div style="color:#64748b;font-size:13px;line-height:1.5;display:flex;align-items:center">
+      用于针对不同发表目标或处于不同修改阶段的论文执行定制化的门禁松紧度裁决。
+    </div>
+  </div>
+</div>
+
+<div id="panelJournal" class="modepanel">
+  <div class="grid">
+    <div><label>目标期刊名称</label><input id="journalName" placeholder="例如 Economic Geography / Research Policy"></div>
+    <div><label>目标期刊 Scope / 领域定位 <span class="hint">可选</span></label><input id="journalScope" placeholder="例如 Economic geography, sustainability transitions, global value chains"></div>
+    <div class="full">
+      <label>目标期刊样本论文文件夹 <span class="hint">需包含 ≥5 篇目标期刊已发表同类论文（支持直接粘贴路径或点击选择）</span></label>
+      <div class="pathrow"><input id="samplesDir" placeholder="可直接粘贴文件夹完整路径，或点击右侧选择…"><button id="pickSamplesDir" type="button">选择文件夹…</button></div>
+    </div>
+    <div class="full" style="display:flex;gap:12px;align-items:center">
+      <button type="button" id="checkRelevanceBtn" style="background:#e0e7ff;color:#3730a3">🔍 预检样本库相关性</button>
+      <span id="relevanceStatus" style="font-size:13px;color:#64748b">输入或选择文件夹后，可预检样本与待测稿件的范式匹配度</span>
+    </div>
+    <div id="relevanceResultBox" class="full warnbox"></div>
+    <div class="full check" id="overrideBox" style="display:none">
+      <input id="overrideRelevance" type="checkbox"><label for="overrideRelevance">我已知晓样本相关性可能存在偏差，仍坚持以此样本库为参照基准开展对齐判断。</label>
+    </div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:16px">
+<div class="full"><label>完整当前稿件 <span class="hint">TXT / Markdown / HTML / DOCX / text-layer PDF（支持直接粘贴路径）</span></label><div class="pathrow"><input id="manuscript" placeholder="可直接粘贴文件完整路径，或点击右侧选择…"><button id="pickManuscript">选择文件…</button></div></div>
 <div><label>模型提供商</label><select id="provider"><option value="deepseek">DeepSeek</option><option value="kimi">Kimi</option><option value="gemini">Gemini</option></select><div id="keyStatus" class="key"></div></div>
 <div><label>模型 <span class="hint">从当前可用目录选择</span></label><div class="pathrow"><select id="model"></select><button id="refreshModels" type="button">刷新列表</button></div><div id="modelSource" class="key"></div></div>
 <div><label>思考设置 <span class="hint">随提供商和模型动态变化</span></label><select id="reasoning"></select><div id="reasoningSource" class="key"></div></div>
 <div><label>输出语言</label><select id="language"><option value="zh">中文</option><option value="en">English</option></select></div>
 <div><label>稳定稿件身份</label><input id="identity" placeholder="例如 manuscript-v12"></div>
-<div class="full"><label>既有最小收据 <span class="hint">可选，仅稳定 STOP receipt 可免两次核心判断 API 调用</span></label><div class="pathrow"><input id="prior" readonly placeholder="首次使用请留空"><button id="pickPrior">选择收据…</button></div><details class="explain"><summary>这是什么？什么时候需要选择？</summary>这是同一稿件上一次判断保存的精简 JSON 凭证，记录稿件身份、文件与语义哈希、裁决、hold codes 和失效条件。只有稿件身份及哈希完全一致、且旧收据仍是合法稳定的 STOP 收据时，核心判断才能复用它而免除整稿覆盖与根因裁决两次核心 API 调用。首次使用或稿件发生实质修改时请留空。若勾选下面的中文解读，解读仍会单独调用一次 API。</details></div>
+<div class="full"><label>既有最小收据 <span class="hint">可选，仅稳定 STOP receipt 可免两次核心判断 API 调用</span></label><div class="pathrow"><input id="prior" placeholder="首次使用请留空，或粘贴既有收据路径"><button id="pickPrior">选择收据…</button></div><details class="explain"><summary>这是什么？什么时候需要选择？</summary>这是同一稿件上一次判断保存的精简 JSON 凭证，记录稿件身份、文件与语义哈希、裁决、hold codes 和失效条件。只有稿件身份及哈希完全一致、且旧收据仍是合法稳定的 STOP 收据时，核心判断才能复用它而免除整稿覆盖与根因裁决两次核心 API 调用。首次使用或稿件发生实质修改时请留空。若勾选下面的中文解读，解读仍会单独调用一次 API。</details></div>
 <div class="full check"><input id="confirmed" type="checkbox"><label for="confirmed">我确认所选文件是身份明确的完整当前稿件。未确认时将直接返回 <b>UNASSESSED</b>，不会调用 API。</label></div>
+<details class="explain"><summary>每次运行都必须重新明确确认</summary>向模型提供商发送稿件前，本地程序会通过 <code>/api/prepare-consent</code> 获取稿件哈希与传输授权凭证，用户必须明确确认。</details>
 <div class="full check"><input id="interpret" type="checkbox" checked><label for="interpret">核心裁决完成后，使用同一提供商额外调用一次 API，生成受 <code>standalone/AGENT.md</code> 约束的中文解读文档。</label></div>
 </div><div class="actions"><button class="primary" id="run">开始只读判断</button><button id="save" disabled>保存完整公开结果…</button><button id="saveInterpretation" disabled>保存中文解读…</button><button id="copy" disabled>复制 JSON</button><button id="close">关闭本地程序</button></div><div id="error" class="error"></div></section>
+
 <section class="panel"><div class="status"><div id="dot" class="dot"></div><div class="statushead"><div><b id="phase">ready</b><div id="message" class="subtitle">就绪 / Ready</div></div><div id="elapsed" class="elapsed">0.0 秒</div></div></div><ol id="timeline" class="timeline"></ol><div class="statusnote">三家提供商均使用非流式兼容接口；这里实时显示真实阶段、请求尝试、等待用时、token usage、定价刷新与本地合同校验，不显示虚构百分比。</div></section>
 <section id="result" class="panel result"><div id="verdict" class="verdict"></div><div id="reason" class="reason"></div><div class="cols"><div class="box"><h3>证据层 hold</h3><ul id="evidence"></ul></div><div class="box"><h3>投稿／外部 hold</h3><ul id="submission"></ul></div></div><div class="cols"><div class="box"><h3>应保护、不应扰动</h3><ul id="protected"></ul></div><div class="box"><h3>核心卡片允许的轻量方向</h3><div id="suggestions" class="reason"></div></div></div><div class="box" style="margin-top:14px"><h3>下一步允许做什么</h3><div id="next" class="reason"></div></div><div id="harnessBox" class="box" style="margin-top:14px;display:none"><h3>Harness 门禁收据</h3><ul id="harnessChecks"></ul></div><div id="costBox" class="box" style="margin-top:14px;display:none"><h3>本次任务计费估算</h3><div id="costTotal" class="verdict" style="font-size:19px"></div><div id="costSource" class="reason"></div><ul id="costCalls"></ul><ul id="costLimits"></ul></div><div id="interpError" class="interp-error"></div><div id="interpretation" class="interpretation"><h2>中文结果解读</h2><div id="statusExplanation" class="reason"></div><div class="cols"><div class="box"><h3>判断依据</h3><ul id="judgmentBasis"></ul></div><div class="box"><h3>判断原则</h3><ul id="judgmentPrinciples"></ul></div></div><div class="box" style="margin-top:14px"><h3>重点考察维度</h3><div id="dimensions"></div></div><div class="cols"><div class="box"><h3>当前稳定且应保护</h3><ul id="stable"></ul></div><div class="box"><h3>仍需注意</h3><ul id="attention"></ul></div></div><div class="box" style="margin-top:14px"><h3>选择性公开观察</h3><div id="findings"></div></div><div class="box" style="margin-top:14px"><h3>投稿前人工核对清单</h3><ul id="checklist"></ul></div><div class="box" style="margin-top:14px"><h3>可选低风险微调</h3><div id="adjustments"></div></div><div class="box" style="margin-top:14px"><h3>报告局限性</h3><ul id="limitations"></ul></div><div class="box" style="margin-top:14px"><h3>使用边界</h3><div id="boundary" class="reason"></div></div></div><details style="margin-top:16px"><summary>完整公开 JSON</summary><pre id="json"></pre></details></section>
 <footer>稿件按不可变、不可信输入处理。API key 只从环境变量读取，不会显示或写入结果。页面不加载任何远程脚本或资源。</footer>
 </div><script>
-const TOKEN={token_json};let providers={{}},poller=null,lastResult=null,lastProvider='';
+const TOKEN={token_json};let providers={{}},poller=null,lastResult=null,lastProvider='',currentMode='standard';
 async function api(path,body){{const opt={{method:body===undefined?'GET':'POST',headers:{{'X-MRC-Token':TOKEN}}}};if(body!==undefined){{opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body)}}const r=await fetch(path,opt);const data=await r.json();if(!r.ok)throw new Error(data.error||('HTTP '+r.status));return data}}
 const $=id=>document.getElementById(id);function showError(message){{$('error').textContent=message;$('error').style.display=message?'block':'none'}}
+
+function cleanPath(val){{
+  if(!val)return '';
+  let s=val.trim();
+  if((s.startsWith('"')&&s.endsWith('"'))||(s.startsWith("'")&&s.endsWith("'"))){{
+    s=s.slice(1,-1).trim();
+  }}
+  return s;
+}}
+
+function switchMode(mode){{
+  currentMode=mode;
+  $('tabStandard').className='tab-btn '+(mode==='standard'?'active':'');
+  $('tabStrictness').className='tab-btn '+(mode==='strictness'?'active':'');
+  $('tabJournal').className='tab-btn '+(mode==='journal_benchmark'?'active':'');
+  $('panelStandard').className='modepanel '+(mode==='standard'?'active':'');
+  $('panelStrictness').className='modepanel '+(mode==='strictness'?'active':'');
+  $('panelJournal').className='modepanel '+(mode==='journal_benchmark'?'active':'');
+}}
+
 function populateModels(models,preferred){{const el=$('model'),wanted=preferred||el.value;el.textContent='';[...new Set(models||[])].forEach(model=>{{const option=document.createElement('option');option.value=model;option.textContent=model;el.appendChild(option)}});if([...el.options].some(option=>option.value===wanted))el.value=wanted;else if(el.options.length)el.selectedIndex=0}}
 function updateProvider(force=false){{const selected=$('provider').value,p=providers[selected];if(!p)return;const changed=force||lastProvider!==selected;if(changed)populateModels(p.models,p.default_model);lastProvider=selected;$('keyStatus').textContent=p.key_present?('✓ 已检测 '+p.key_variable):('✕ 缺少 '+p.key_variable);$('keyStatus').className='key '+(p.key_present?'ok':'bad');if(!$('modelSource').textContent)$('modelSource').textContent='内置回退目录包含多个兼容模型；可刷新提供商当前目录'}}
 async function refreshReasoningOptions(){{const provider=$('provider').value,model=$('model').value;if(!model)return;try{{const r=await api('/api/reasoning-options',{{provider,model}}),el=$('reasoning'),wanted=el.value;el.textContent='';r.options.forEach(item=>{{const option=document.createElement('option');option.value=item.value;option.textContent=item.label;el.appendChild(option)}});if([...el.options].some(option=>option.value===wanted))el.value=wanted;else el.value=r.default;$('reasoningSource').textContent=r.note}}catch(e){{$('reasoning').textContent='';$('reasoningSource').textContent='思考设置读取失败：'+e.message}}}}
@@ -855,12 +1157,110 @@ function renderTimeline(items){{const el=$('timeline');el.textContent='';(items|
 function renderResult(result,busy,interpretationError,presentationError,machineError){{lastResult=result;const c=result.closure_card;$('result').style.display='block';$('verdict').textContent=c.Verdict;$('reason').textContent=c.Reason;list('evidence',c['Evidence holds']);list('submission',c['Submission / external holds']);list('protected',c['Protected / Do not disturb']);renderSuggestions(c['Lite directional suggestions']);$('next').textContent=c['Next permitted action'];renderHarness(result.runtime);renderCost(result.task_cost);renderInterpretation(result.interpretation);$('json').textContent=JSON.stringify(result,null,2);$('save').disabled=busy;$('copy').disabled=busy;$('saveInterpretation').disabled=busy||!(result.interpretation&&result.interpretation.document);const holdText=machineError?('机器裁决未形成；公开展示未启动：'+machineError):(presentationError?('机器裁决保持有效，但公开展示处于 HOLD：'+presentationError):(interpretationError?('核心裁决保持有效，但中文解读未生成：'+interpretationError):''));$('interpError').textContent=holdText;$('interpError').style.display=holdText?'block':'none'}}
 function renderStatus(s){{providers=s.providers;updateProvider();$('phase').textContent=s.phase;$('message').textContent=s.message;$('elapsed').textContent=Number(s.elapsed_seconds).toFixed(1)+' 秒';$('run').disabled=s.busy;$('dot').className='dot '+(s.busy?'busy':(s.error||s.presentation_error||s.machine_error)?'bad':s.result?'ok':'');renderTimeline(s.timeline);if(s.error)showError(s.error);if(s.result)renderResult(s.result,s.busy,s.interpretation_error,s.presentation_error,s.machine_error);if(!s.busy&&poller){{clearInterval(poller);poller=null}}}}
 async function refresh(){{try{{renderStatus(await api('/api/status'))}}catch(e){{showError(e.message)}}}}
-$('provider').onchange=async()=>{{$('modelSource').textContent='';updateProvider(true);await refreshModelCatalog()}};$('model').onchange=refreshReasoningOptions;$('refreshModels').onclick=refreshModelCatalog;$('pickManuscript').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-manuscript',{{}});if(r.path){{$('manuscript').value=r.path;$('identity').value=r.path.split(/[\\/]/).pop()}}}}catch(e){{showError(e.message)}}}};
-$('pickPrior').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-prior',{{}});if(r.path)$('prior').value=r.path}}catch(e){{showError(e.message)}}}};
-$('run').onclick=async()=>{{try{{showError('');$('result').style.display='none';$('save').disabled=true;$('saveInterpretation').disabled=true;$('copy').disabled=true;lastResult=null;await api('/api/analyze',{{manuscript_path:$('manuscript').value,provider:$('provider').value,model:$('model').value,reasoning_option:$('reasoning').value,language:$('language').value,identity:$('identity').value,confirmed_complete:$('confirmed').checked,prior_receipt_path:$('prior').value,generate_interpretation:$('interpret').checked}});await refresh();poller=setInterval(refresh,400)}}catch(e){{showError(e.message);await refresh()}}}};
+$('provider').onchange=async()=>{{$('modelSource').textContent='';updateProvider(true);await refreshModelCatalog()}};$('model').onchange=refreshReasoningOptions;$('refreshModels').onclick=refreshModelCatalog;
+
+$('manuscript').oninput=()=>{{
+  const clean=cleanPath($('manuscript').value);
+  if(clean!==$('manuscript').value)$('manuscript').value=clean;
+  if(clean){{
+    const filename=clean.split(/[\\\\/]/).pop();
+    if(filename&&(!$('identity').value||$('identity').value.includes('.'))){{
+      $('identity').value=filename;
+    }}
+  }}
+}};
+$('samplesDir').oninput=()=>{{
+  const clean=cleanPath($('samplesDir').value);
+  if(clean!==$('samplesDir').value)$('samplesDir').value=clean;
+}};
+$('prior').oninput=()=>{{
+  const clean=cleanPath($('prior').value);
+  if(clean!==$('prior').value)$('prior').value=clean;
+}};
+
+$('pickManuscript').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-manuscript',{{}});if(r.path){{$('manuscript').value=cleanPath(r.path);$('identity').value=r.path.split(/[\\\\/]/).pop()}}}}catch(e){{showError(e.message)}}}};
+$('pickPrior').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-prior',{{}});if(r.path)$('prior').value=cleanPath(r.path)}}catch(e){{showError(e.message)}}}};
+$('pickSamplesDir').onclick=async()=>{{try{{showError('');const r=await api('/api/pick-samples-dir',{{}});if(r.path)$('samplesDir').value=cleanPath(r.path)}}catch(e){{showError(e.message)}}}};
+
+$('checkRelevanceBtn').onclick=async()=>{{
+  const manuscript=cleanPath($('manuscript').value),samplesDir=cleanPath($('samplesDir').value);
+  if(!manuscript){{showError('请先输入或选择被测稿件文件路径');return}}
+  if(!samplesDir){{showError('请先输入或选择样本论文文件夹路径');return}}
+  showError('');
+  $('relevanceStatus').textContent='正在调用模型分析样本库与稿件相关性…';
+  try{{
+    const r=await api('/api/check-samples-relevance',{{
+      manuscript_path:manuscript,
+      samples_dir:samplesDir,
+      provider:$('provider').value,
+      model:$('model').value,
+      reasoning_option:$('reasoning').value,
+      target_journal_name:$('journalName').value,
+      target_journal_scope:$('journalScope').value,
+    }});
+    $('relevanceStatus').textContent='✓ 已完成预检（已识别 '+r.sample_papers_count+' 篇样本）';
+    const box=$('relevanceResultBox');
+    box.style.display='block';
+    const tag=r.rating==='HIGH'?'<span style="color:#137a50;font-weight:bold">【高度匹配 HIGH (契合度 '+r.score+')】</span>':(r.rating==='MODERATE'?'<span style="color:#b54708;font-weight:bold">【中等匹配 MODERATE (契合度 '+r.score+')】</span>':'<span style="color:#b42318;font-weight:bold">【匹配度偏低 LOW (契合度 '+r.score+')】</span>');
+    box.innerHTML='<div><b>样本相关性评估：</b>'+tag+'</div><div style="margin-top:6px">'+r.explanation+'</div><div style="margin-top:4px;color:#667085">方法学范式：'+r.methodological_alignment+'</div><div style="margin-top:4px;color:#667085">理论契合度：'+r.theoretical_alignment+'</div><div style="margin-top:6px;font-weight:600">建议：'+r.recommendation+'</div>';
+    if(r.rating==='LOW'){{
+      $('overrideBox').style.display='flex';
+    }} else {{
+      $('overrideBox').style.display='none';
+    }}
+  }}catch(e){{
+    $('relevanceStatus').textContent='预检失败：'+e.message;
+    showError(e.message);
+  }}
+}};
+
+$('run').onclick=async()=>{{
+  try{{
+    showError('');
+    const manuscript=cleanPath($('manuscript').value),samplesDir=cleanPath($('samplesDir').value);
+    if(currentMode==='journal_benchmark'){{
+      if(!samplesDir){{showError('目标期刊模式下，必须指定包含 ≥5 篇样本论文的文件夹路径');return}}
+    }}
+    $('result').style.display='none';$('save').disabled=true;$('saveInterpretation').disabled=true;$('copy').disabled=true;lastResult=null;
+    const provider=$('provider').value,model=$('model').value;
+    let consent_token='',consent_confirmed=$('confirmed').checked;
+    if(manuscript){{
+      try{{
+        const prep=await api('/api/prepare-consent',{{manuscript_path:manuscript,provider:provider,model:model}});
+        consent_token=prep.consent_token||'';
+      }}catch(_e){{}}
+    }}
+    await api('/api/analyze',{{
+      manuscript_path:manuscript,
+      provider:provider,
+      model:model,
+      reasoning_option:$('reasoning').value,
+      language:$('language').value,
+      identity:$('identity').value,
+      confirmed_complete:$('confirmed').checked,
+      prior_receipt_path:cleanPath($('prior').value),
+      generate_interpretation:$('interpret').checked,
+      consent_token:consent_token,
+      consent_confirmed:consent_confirmed,
+      mode:currentMode,
+      strictness_level:$('strictnessLevel').value,
+      target_journal_name:$('journalName').value,
+      target_journal_scope:$('journalScope').value,
+      sample_papers_dir:samplesDir,
+      sample_relevance_override:$('overrideRelevance').checked
+    }});
+    await refresh();
+    poller=setInterval(refresh,400);
+  }}catch(e){{
+    showError(e.message);
+    await refresh();
+  }}
+}};
+
 $('save').onclick=async()=>{{try{{const r=await api('/api/save',{{}});if(r.saved)$('message').textContent='已保存：'+r.path}}catch(e){{showError(e.message)}}}};
 $('saveInterpretation').onclick=async()=>{{try{{const r=await api('/api/save-interpretation',{{}});if(r.saved)$('message').textContent='中文解读已保存：'+r.path}}catch(e){{showError(e.message)}}}};
 $('copy').onclick=async()=>{{if(!lastResult)return;const text=JSON.stringify(lastResult,null,2);try{{await navigator.clipboard.writeText(text)}}catch(_e){{const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();document.execCommand('copy');area.remove()}}$('message').textContent='JSON 已复制'}};
 $('close').onclick=async()=>{{try{{await api('/api/close',{{}});document.body.innerHTML='<div style="font:18px Segoe UI;padding:40px">本地程序已关闭，可以关闭此页面。<br>Local program closed; you may close this tab.</div>'}}catch(e){{showError(e.message)}}}};
 refresh().then(refreshReasoningOptions);
-</script></body></html>'''
+</script></body></html>
+'''

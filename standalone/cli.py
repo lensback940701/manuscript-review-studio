@@ -49,7 +49,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--confirm-complete",
         action="store_true",
-        help="Affirm that the input is the complete identifiable current manuscript; otherwise returns UNASSESSED without an API call",
+        help="Legacy user statement retained for receipt compatibility; it does not gate provider routing",
+    )
+    parser.add_argument(
+        "--consent-to-provider-transmission",
+        action="store_true",
+        help=(
+            "Explicitly authorize this invocation to send the selected full text to the bound provider/model; "
+            "default is refusal and every new invocation must confirm again"
+        ),
     )
     parser.add_argument("--prior-receipt", help="Optional prior minimal receipt JSON")
     parser.add_argument("--output", help="Explicitly write the public card and minimal receipt JSON to this path")
@@ -66,6 +74,26 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(0,),
         default=0,
         help="Compatibility flag; 0 is the only accepted value because full requests are never auto-retried",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("standard", "strictness", "journal_benchmark"),
+        default="standard",
+        help="Evaluation mode: standard closure, strictness calibration, or target journal benchmark",
+    )
+    parser.add_argument(
+        "--strictness",
+        choices=("strict", "moderate", "lenient"),
+        default="moderate",
+        help="Strictness profile for strictness mode: strict (top-tier), moderate (standard), lenient (regression-protected)",
+    )
+    parser.add_argument("--target-journal-name", default="", help="Target journal name for journal benchmark mode")
+    parser.add_argument("--target-journal-scope", default="", help="Target journal scope or URL for journal benchmark mode")
+    parser.add_argument("--sample-papers-dir", help="Directory containing >=5 sample papers for journal benchmark mode")
+    parser.add_argument(
+        "--sample-relevance-override",
+        action="store_true",
+        help="Proceed with journal benchmark mode even if sample relevance is assessed as low",
     )
     parser.add_argument("--version", action="version", version=__version__)
     return parser
@@ -90,6 +118,13 @@ def run_cli(argv: list[str]) -> int:
                 prior_receipt=prior,
                 timeout_seconds=args.timeout,
                 transient_retries=args.transient_retries,
+                provider_transmission_consent=args.consent_to_provider_transmission,
+                mode=args.mode,
+                strictness_level=args.strictness,
+                target_journal_name=args.target_journal_name,
+                target_journal_scope=args.target_journal_scope,
+                sample_papers_dir=Path(args.sample_papers_dir) if args.sample_papers_dir else None,
+                sample_relevance_override=args.sample_relevance_override,
             ),
             event_sink=sink,
         )
