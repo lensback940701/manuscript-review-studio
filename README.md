@@ -2,21 +2,25 @@
 
 [中文说明](README.zh-CN.md)
 
-**Open the Windows app, choose a model, add your complete manuscript, and get a rigorous second opinion—without installing Codex or setting up an agent.**
+**Open the Windows app, choose a model, add your complete manuscript, and get a rigorous second opinion—without Codex, Claude Code, ChatGPT Desktop, or any agent environment.**
 
-Manuscript Review Studio is a genuinely standalone desktop application for authors. It launches its own local interface, reads the manuscript you select, and connects directly to DeepSeek, Kimi, or Gemini with your own API key. Codex and ChatGPT are not required to run the Windows application.
+Manuscript Review Studio is a genuinely standalone, one-stop desktop application for authors. Its local interface covers manuscript and target-journal sample selection, provider/model choice, transmission consent, review execution, result display, copying, and saving. The packaged Windows application connects directly to DeepSeek, Kimi, or Gemini with your own API key; it does not require another AI coding tool, IDE extension, or command-line agent to stay open in the background.
 
 Instead of returning an endless list of generic improvements, it is built to answer the question authors actually face: should this manuscript stop general revision, receive one bounded round, or reopen substantive revision? You can use a standard review, set a reviewer personality and strictness, or add a folder of target-journal sample papers so the review better reflects the journal context and your own priorities.
 
+It is especially practical for Chinese users: the application and core output are Chinese-first, DeepSeek and Kimi are first-class model choices, and usage estimates can be displayed in CNY. The same manuscript can also be reviewed in separate runs by different models. Comparing those independent results can reveal more than relying on one model's preferred style, strengths, or blind spots; the current release keeps each run visible rather than inventing an automatic cross-model consensus.
+
 ## What authors get
 
-- **A real standalone Windows program.** Launch the local interface directly; no Codex installation, command-line agent, or development environment is required to use the packaged application.
+- **A real one-stop Windows program.** Complete file selection, model configuration, review, result viewing, copying, and saving in one local interface—without Codex, Claude Code, or a development environment.
 - **A whole-manuscript decision.** The app evaluates the paper as a complete argument instead of commenting on isolated paragraphs.
-- **Review that can fit your situation.** Choose standard review, reviewer personality/strictness, or target-journal sample mode.
+- **China-friendly model choice.** Switch flexibly between DeepSeek and Kimi, while retaining Gemini as an additional international comparison.
+- **Cross-model second opinions.** Run the same manuscript independently with different models and compare their judgments for broader coverage.
+- **One strict standard across providers.** Every supported model is placed inside the same review contract and validation gates, reducing dependence on any one brand's default response style without claiming to eliminate model limitations.
 - **A clear revision endpoint.** Receive a bounded verdict, the most important revision directions, protected strengths, and separate evidence or submission reminders.
 - **Control before transmission.** The app shows the selected file, provider, and model and asks for fresh confirmation before sending manuscript text.
 
-Under the surface, the application embeds a multi-stage review harness rather than relying on one free-form API reply. That machinery is there to make the model review more disciplined and internally consistent; authors do not need to understand or configure the technical details.
+Under the surface, the application embeds a stricter multi-stage harness rather than accepting one free-form API reply. It asks each supported model to work through the same review standards and consistency checks; authors do not need to understand or configure that machinery.
 
 Manuscript Review Studio does not guarantee that a model is correct, replace peer review, or predict journal acceptance. It provides a more structured and transparent AI second opinion.
 
