@@ -10,6 +10,12 @@ Instead of returning an endless list of generic improvements, it is built to ans
 
 It is especially practical for Chinese users: the application and core output are Chinese-first, DeepSeek and Kimi are first-class model choices, and usage estimates can be displayed in CNY. The same manuscript can also be reviewed in separate runs by different models. Comparing those independent results can reveal more than relying on one model's preferred style, strengths, or blind spots; the current release keeps each run visible rather than inventing an automatic cross-model consensus.
 
+<!-- ILLUSTRATION_SLOT_00_START -->
+![Concept overview of the standalone Manuscript Review Studio workflow, from manuscript and journal-sample selection through review, verdict, protected strengths, comparison, and saved results.](docs/images/00-manuscript-review-studio-overview.png)
+
+*Concept illustration of the one-stop workflow. Model names shown inside the illustration are illustrative; the actual supported provider/model catalog is the current catalog displayed by the application.*
+<!-- ILLUSTRATION_SLOT_00_END -->
+
 ## What authors get
 
 - **A real one-stop Windows program.** Complete file selection, model configuration, review, result viewing, copying, and saving in one local interface—without Codex, Claude Code, or a development environment.

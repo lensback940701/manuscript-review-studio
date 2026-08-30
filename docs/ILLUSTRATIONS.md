@@ -2,10 +2,11 @@
 
 [中文说明](ILLUSTRATIONS.zh-CN.md)
 
-Four author-supplied illustrations are included in both the English and Chinese landing pages. The selected set uses one coherent visual system and avoids language-dependent body text where practical.
+Five author-supplied illustrations are included in both the English and Chinese landing pages. The selected set uses one coherent visual system and avoids language-dependent body text where practical.
 
 | Slot | Planned file | Suggested ratio | Purpose |
 | --- | --- | --- | --- |
+| 0 | `docs/images/00-manuscript-review-studio-overview.png` | 16:9 | Introduce the standalone one-stop product workflow before the author-facing benefits. |
 | 1 | `docs/images/01-closure-gate.png` | 16:9 | Show the endless-revision loop being interrupted by a safe closure gate. |
 | 2 | `docs/images/02-four-verdicts.png` | 16:9 | Explain the four substantive verdicts without implying a quality score. |
 | 3 | `docs/images/03-two-axis-separation.png` | 16:9 | Separate substantive revision closure from evidence and submission holds. |

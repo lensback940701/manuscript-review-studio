@@ -35,16 +35,17 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.assertIn(f"[中文说明]({stem}.zh-CN.md)", english_path.read_text(encoding="utf-8"))
             self.assertIn(f"[English]({stem}.md)", chinese_path.read_text(encoding="utf-8"))
 
-    def test_four_illustration_slots_are_stable(self) -> None:
+    def test_five_illustration_slots_are_stable(self) -> None:
         for filename in ("README.md", "README.zh-CN.md"):
             content = (ROOT / filename).read_text(encoding="utf-8")
-            for index in range(1, 5):
+            for index in range(0, 5):
                 slot = f"ILLUSTRATION_SLOT_{index:02d}"
                 self.assertEqual(1, content.count(f"{slot}_START"))
                 self.assertEqual(1, content.count(f"{slot}_END"))
 
         illustrations = (ROOT / "docs" / "ILLUSTRATIONS.md").read_text(encoding="utf-8")
         expected_assets = (
+            "00-manuscript-review-studio-overview.png",
             "01-closure-gate.png",
             "02-four-verdicts.png",
             "03-two-axis-separation.png",
@@ -54,6 +55,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.assertIn(asset, illustrations)
 
         expected_dimensions = {
+            "00-manuscript-review-studio-overview.png": (1672, 941),
             "01-closure-gate.png": (1672, 941),
             "02-four-verdicts.png": (1672, 941),
             "03-two-axis-separation.png": (1672, 941),
