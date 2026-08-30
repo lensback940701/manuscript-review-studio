@@ -143,7 +143,7 @@ class StandaloneRuntimeTests(unittest.TestCase):
             ),
         )
         with patch.object(native_dialogs.ctypes, "windll", fake_windll, create=True), patch.object(
-            native_dialogs.os, "name", "nt"
+            native_dialogs, "os", SimpleNamespace(name="nt")
         ), patch.object(
             native_dialogs.subprocess,
             "run",
