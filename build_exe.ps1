@@ -100,12 +100,12 @@ $ReceiptJson = $Receipt | ConvertTo-Json
 $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Join-Path $Release 'BUILD_RECEIPT.json'), $ReceiptJson, $Utf8NoBomEncoding)
 $Hash.Hash | Set-Content -LiteralPath (Join-Path $Release 'ManuscriptRevisionClosure.exe.sha256') -Encoding ascii
-Copy-Item -LiteralPath (Join-Path $ProjectRoot 'STANDALONE.zh-CN.md') -Destination $Release -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\STANDALONE.zh-CN.md') -Destination $Release -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\PORTABILITY.zh-CN.md') -Destination $Release -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\HARNESS_EQUIVALENCE_AUDIT.zh-CN.md') -Destination (Join-Path $Release 'HARNESS_AUDIT.zh-CN.md') -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\NATIVE_PRESENTATION_TRANSACTION_AUDIT.zh-CN.md') -Destination (Join-Path $Release 'NATIVE_PRESENTATION_TRANSACTION_AUDIT.zh-CN.md') -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'standalone\AGENT.md') -Destination (Join-Path $Release 'INTERPRETATION_AGENT.md') -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'LICENSE') -Destination $Release -Force
-Copy-Item -LiteralPath (Join-Path $ProjectRoot 'THIRD_PARTY_NOTICES.md') -Destination $Release -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\THIRD_PARTY_NOTICES.md') -Destination $Release -Force
 Write-Host "Built $Exe"
 Write-Host "SHA-256 $($Hash.Hash)"

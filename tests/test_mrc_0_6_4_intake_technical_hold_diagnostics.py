@@ -539,7 +539,7 @@ class Mrc064FailureFirstTests(unittest.TestCase):
         self.assertIn("never trigger an automatic full-request resend", readme)
         for relative in (
             "README.zh-CN.md",
-            "STANDALONE.zh-CN.md",
+            "docs/STANDALONE.zh-CN.md",
             "docs/HARNESS_EQUIVALENCE_AUDIT.zh-CN.md",
             "docs/NATIVE_PRESENTATION_TRANSACTION_AUDIT.zh-CN.md",
         ):

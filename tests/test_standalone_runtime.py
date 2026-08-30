@@ -142,7 +142,7 @@ class StandaloneRuntimeTests(unittest.TestCase):
                 CoTaskMemFree=free,
             ),
         )
-        with patch.object(native_dialogs.ctypes, "windll", fake_windll), patch.object(
+        with patch.object(native_dialogs.ctypes, "windll", fake_windll, create=True), patch.object(
             native_dialogs.os, "name", "nt"
         ), patch.object(
             native_dialogs.subprocess,

@@ -34,7 +34,7 @@ specifically reference commit
 No OpenAI Codex source file is copied into this repository or its standalone executable.
 The repository is neither endorsed by nor affiliated with OpenAI. See the
 [official Codex open-source documentation](https://learn.chatgpt.com/docs/open-source),
-[Release Provenance](PROVENANCE.md), and [Third-party notices](THIRD_PARTY_NOTICES.md).
+[Release Provenance](docs/PROVENANCE.md), and [Third-party notices](docs/THIRD_PARTY_NOTICES.md).
 The smaller, Skill-only distribution remains available as
 [`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure).
 
@@ -136,7 +136,7 @@ an optional contract-bounded Chinese interpretation, assessment basis and dimens
 brief limitations, pre-submission checklist, and an actual-usage cost estimate from
 official pricing sources.
 API keys are read only from environment variables. See
-[`STANDALONE.zh-CN.md`](STANDALONE.zh-CN.md) for usage, build instructions, and
+[`STANDALONE.zh-CN.md`](docs/STANDALONE.zh-CN.md) for usage, build instructions, and
 security boundaries. The standalone and Skill versions are managed separately;
 this does not change the Skill's `0.2.1` contract version.
 
@@ -201,11 +201,11 @@ tests/                           Unit and contract regression tests
 docs/images/                    Documentation illustrations
 ```
 
-The included illustration slots and filenames are documented in [Documentation illustrations](ILLUSTRATIONS.md). They explain the public contract without changing the skill's decision logic.
+The included illustration slots and filenames are documented in [Documentation illustrations](docs/ILLUSTRATIONS.md). They explain the public contract without changing the skill's decision logic. Version history is available in the [Changelog](docs/CHANGELOG.md).
 
 ## Security and contributions
 
-See [Security Policy](SECURITY.md) and [Contributing](CONTRIBUTING.md). Do not submit real manuscripts, confidential review material, local paths, API keys, or project evidence as issues or test fixtures.
+See [Security Policy](.github/SECURITY.md) and [Contributing](.github/CONTRIBUTING.md). Do not submit real manuscripts, confidential review material, local paths, API keys, or project evidence as issues or test fixtures.
 
 ## License
 

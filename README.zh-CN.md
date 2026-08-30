@@ -30,7 +30,7 @@ Manuscript Review Studio 不保证模型判断永远正确，也不替代同行�
 [`openai/codex`](https://github.com/openai/codex) 仓库，具体参考 commit 为
 [`d5caceccb1ee5bf94c081b995575ce4860e0912b`](https://github.com/openai/codex/commit/d5caceccb1ee5bf94c081b995575ce4860e0912b)。
 本仓库及其 standalone EXE 均未复制 OpenAI Codex 源文件，也不代表 OpenAI 的认可、隶属或背书。可参见
-[Codex 官方开源说明](https://learn.chatgpt.com/docs/open-source)、[发布来源说明](PROVENANCE.zh-CN.md)与[第三方说明](THIRD_PARTY_NOTICES.md)。
+[Codex 官方开源说明](https://learn.chatgpt.com/docs/open-source)、[发布来源说明](docs/PROVENANCE.zh-CN.md)与[第三方说明](docs/THIRD_PARTY_NOTICES.md)。
 仅包含核心 Skill 的轻量仓库继续保留在
 [`manuscript-revision-closure`](https://github.com/lensback940701/manuscript-revision-closure)。
 
@@ -129,7 +129,7 @@ Windows 的常见位置是：
 Codex 的情况下执行只读截止输出合同。双击 EXE 会打开本地 GUI，并可选生成受
 十一键合同约束的中文结果解读、判断依据/原则/维度、简要局限和投稿前核对清单。
 GUI 还会按 API 返回的实际 token usage 和官方价格页估算本次费用。API key 只从环境变量读取。使用、构建和
-安全边界见 [`STANDALONE.zh-CN.md`](STANDALONE.zh-CN.md)。Standalone 版本与
+安全边界见 [`STANDALONE.zh-CN.md`](docs/STANDALONE.zh-CN.md)。Standalone 版本与
 Skill 版本分别管理，不改变本 Skill 的 `0.2.1` 合同版本。
 
 Standalone 0.6.4 使用可见的多模型下拉框，并按 DeepSeek、Kimi、Gemini
@@ -179,11 +179,11 @@ tests/                           单元测试和契约回归测试
 docs/images/                    说明文档插图
 ```
 
-已经采用的插图及其文件名记录在[说明文档插图](ILLUSTRATIONS.zh-CN.md)中。这些插图用于解释公开契约，不改变本 Skill 的判断逻辑。
+已经采用的插图及其文件名记录在[说明文档插图](docs/ILLUSTRATIONS.zh-CN.md)中。这些插图用于解释公开契约，不改变本 Skill 的判断逻辑。历次版本变化见[更新记录](docs/CHANGELOG.zh-CN.md)。
 
 ## 安全与参与贡献
 
-请阅读[安全政策](SECURITY.zh-CN.md)和[参与贡献](CONTRIBUTING.zh-CN.md)。不要把真实稿件、保密审稿材料、本地路径、接口密钥或项目证据提交为问题或测试样本。
+请阅读[安全政策](.github/SECURITY.zh-CN.md)和[参与贡献](.github/CONTRIBUTING.zh-CN.md)。不要把真实稿件、保密审稿材料、本地路径、接口密钥或项目证据提交为问题或测试样本。
 
 ## 许可证
 

@@ -4,7 +4,7 @@
 Skill 0.2.1 的只读截止判断输出合同，通过 DeepSeek、Kimi 或 Gemini API 完成不落盘的
 整稿覆盖与根因裁决，再由原确定性 helper 生成 Closure Card 和最小收据。它不复制 Codex
 的通用工具系统，但已加入与本 Skill 直接相关的 intake、coverage、adjudication 和 contradiction gates；架构审计见
-[`docs/HARNESS_EQUIVALENCE_AUDIT.zh-CN.md`](docs/HARNESS_EQUIVALENCE_AUDIT.zh-CN.md)。
+[`HARNESS_EQUIVALENCE_AUDIT.zh-CN.md`](HARNESS_EQUIVALENCE_AUDIT.zh-CN.md)。
 
 0.6.4 继续将 provider completion、usage、machine adjudication 和公开展示拆分为独立事务，并收敛为薄本地技术预检、逐次全文外发确认和 coverage 内语义 basis gate。`mrc-local-technical-preflight-1.0` 仅阻断不可读/不支持/提取失败、零有效文本、明确超限或配置失败；任何标题、章节、顺序、编号、ATX/Setext/plain、YAML/TOML 解析结果都只进入 `mrc-format-advisory-1.0`，不能改变 coverage routing。GUI 每次运行通过 `mrc-provider-transmission-consent-1.0` 显示并绑定文件路径/名称/SHA-256、provider、model 和可能计费说明；取消 API=0，确认不可复用。第一次 coverage 同时执行 `mrc-semantic-manuscript-basis-1.0`，不增加全文请求；basis 不足为 coverage=1/adjudication=0/no verdict/no presentation，技术错误仍使用 `mrc-technical-hold-receipt-1.0`。所有核心和公开调用固定 `max_transient_retries=0`。
 
@@ -23,7 +23,7 @@ release\ManuscriptRevisionClosure.exe
 
 没有稳定 STOP receipt 时，核心判断固定进行两次同模型 API 调用：第一次形成十维有限覆盖
 状态，第二次重新读取全文、逐项处理 coverage candidates，并可在 canonical 维度内恢复第一阶段漏报。两阶段都必须区分真实 evidence-bound caution 与遮蔽贡献/方法可评估性/论证闭合的防御性结构；“不要过度修改”既不能自动触发 revision，也不能代替肯定性 STOP 证明。GUI 默认在核心裁决后再额外调用一次同一模型，生成中文结果解读。该解读受
-[`standalone/AGENT.md`](standalone/AGENT.md) 的精确十一个键合同约束，包含判断依据、
+[`standalone/AGENT.md`](../standalone/AGENT.md) 的精确十一个键合同约束，包含判断依据、
 判断原则、重点维度、选择性公开观察、应保护内容、投稿前人工核对清单、简要局限和
 最多三项低风险可选微调。可取消勾选以免除这次额外 API 调用。
 
@@ -180,9 +180,9 @@ python -m venv .venv
 ```
 
 最小 harness 的推导、Codex 参考 commit 和明确排除项见
-[`docs/HARNESS_EXTRACTION.zh-CN.md`](docs/HARNESS_EXTRACTION.zh-CN.md)。
+[`HARNESS_EXTRACTION.zh-CN.md`](HARNESS_EXTRACTION.zh-CN.md)。
 换电脑运行、loopback 安全边界和已验证/未保证的平台范围见
-[`docs/PORTABILITY.zh-CN.md`](docs/PORTABILITY.zh-CN.md)。
+[`PORTABILITY.zh-CN.md`](PORTABILITY.zh-CN.md)。
 
 ## 限制
 

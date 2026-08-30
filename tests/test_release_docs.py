@@ -20,9 +20,16 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("[English](README.md)", readme_zh)
 
     def test_public_guides_have_language_pairs(self) -> None:
-        for stem in ("CHANGELOG", "CONTRIBUTING", "ILLUSTRATIONS", "PROVENANCE", "SECURITY"):
-            english_path = ROOT / f"{stem}.md"
-            chinese_path = ROOT / f"{stem}.zh-CN.md"
+        guide_roots = {
+            "CHANGELOG": ROOT / "docs",
+            "CONTRIBUTING": ROOT / ".github",
+            "ILLUSTRATIONS": ROOT / "docs",
+            "PROVENANCE": ROOT / "docs",
+            "SECURITY": ROOT / ".github",
+        }
+        for stem, directory in guide_roots.items():
+            english_path = directory / f"{stem}.md"
+            chinese_path = directory / f"{stem}.zh-CN.md"
             self.assertTrue(english_path.is_file())
             self.assertTrue(chinese_path.is_file())
             self.assertIn(f"[中文说明]({stem}.zh-CN.md)", english_path.read_text(encoding="utf-8"))
@@ -36,7 +43,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
                 self.assertEqual(1, content.count(f"{slot}_START"))
                 self.assertEqual(1, content.count(f"{slot}_END"))
 
-        illustrations = (ROOT / "ILLUSTRATIONS.md").read_text(encoding="utf-8")
+        illustrations = (ROOT / "docs" / "ILLUSTRATIONS.md").read_text(encoding="utf-8")
         expected_assets = (
             "01-closure-gate.png",
             "02-four-verdicts.png",
@@ -63,10 +70,31 @@ class ReleaseDocumentationTests(unittest.TestCase):
         for path in (
             ROOT / "LICENSE",
             ROOT / "NOTICE",
+            ROOT / ".github" / "CONTRIBUTING.md",
+            ROOT / ".github" / "SECURITY.md",
             ROOT / ".github" / "workflows" / "tests.yml",
+            ROOT / "docs" / "CHANGELOG.md",
+            ROOT / "docs" / "STANDALONE.zh-CN.md",
+            ROOT / "docs" / "THIRD_PARTY_NOTICES.md",
             ROOT / "docs" / "images" / ".gitkeep",
         ):
             self.assertTrue(path.is_file(), str(path))
+
+    def test_all_relative_markdown_links_resolve(self) -> None:
+        link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+        for path in ROOT.rglob("*.md"):
+            if any(part in {".git", ".venv", ".build", "release", "__pycache__"} for part in path.parts):
+                continue
+            content = path.read_text(encoding="utf-8", errors="strict")
+            for raw_target in link_pattern.findall(content):
+                target = raw_target.strip().strip("<>")
+                if target.startswith(("http://", "https://", "mailto:", "#")):
+                    continue
+                relative = target.split("#", 1)[0]
+                if not relative:
+                    continue
+                resolved = (path.parent / relative).resolve()
+                self.assertTrue(resolved.exists(), f"broken link in {path}: {raw_target}")
 
     def test_private_prompt_pack_is_not_published(self) -> None:
         self.assertFalse((ROOT / "ILLUSTRATION_GENERATION_PROMPTS.md").exists())
