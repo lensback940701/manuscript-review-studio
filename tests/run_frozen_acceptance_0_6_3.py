@@ -508,6 +508,10 @@ def run_cli_case(
         )
         assert completed.returncode == 0, (scenario, completed.stdout, completed.stderr)
         result = json.loads(output.read_text(encoding="utf-8"))
+        # Regression: a frozen Windows CLI must retain Chinese JSON when stdout
+        # is redirected, even if the host default code page cannot encode it.
+        assert json.loads(completed.stdout) == result, "UTF-8 stdout/file mismatch"
+        assert any("\u3400" <= char <= "\u9fff" for char in completed.stdout), "Chinese stdout missing"
         events = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines() if line]
         validate_common_runtime(result, events)
         requests = deepcopy(mock.requests)
@@ -985,6 +989,7 @@ def main() -> None:
         {
             "status": "PASS_FROZEN_MRC_0_6_4_MOCK_ACCEPTANCE",
             "case_count": len(summary["cases"]),
+            "cli_utf8_stdout_roundtrip": True,
             "real_api_calls": 0,
             "real_manuscripts_read": 0,
             "secret_values_persisted": 0,

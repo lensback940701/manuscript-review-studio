@@ -26,6 +26,7 @@ $BuildMetadata = $BuildMetadataJson | ConvertFrom-Json
     --noconfirm `
     --clean `
     --onefile `
+    --python-option "X utf8" `
     --name ManuscriptRevisionClosure `
     --distpath $Release `
     --workpath $Work `
@@ -104,6 +105,7 @@ $Receipt = [ordered]@{
     release_version = $BuildMetadata.release_version
     built_at_utc = $BuildMetadata.built_at_utc
     python = $BuildMetadata.python
+    python_interpreter_options = @('X utf8')
     platform = $BuildMetadata.platform
     pyinstaller = $BuildMetadata.pyinstaller
     pypdf = $BuildMetadata.pypdf
