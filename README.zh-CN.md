@@ -2,13 +2,44 @@
 
 [English](README.md)
 
-**打开 Windows 程序，选择模型，放入整篇论文，就能获得一次严格而有结论的独立复审——不依赖 Codex、Claude Code、ChatGPT 桌面端或任何 agent 环境。**
+**使用 DeepSeek、Kimi 或 Gemini 对整篇论文作只读复审：判断应该停止改稿、再做一轮有限修改，还是重新开启实质性修订。**
 
-Manuscript Review Studio 是一款真正面向作者、能够一站式独立运行的桌面应用。从选择稿件和目标期刊样本文件夹，到设置 provider/model、确认全文外发、执行审阅、查看结果、复制与保存，都可以在同一个本地界面中完成。Windows 封装版使用你自己的 API key 直接连接 DeepSeek、Kimi 或 Gemini，不要求后台另开 AI 编程软件、IDE 插件或命令行 agent。
+程序在本机运行，使用你自己的 API key 直接连接所选模型提供商。它提供三种审阅模式、随模型变化的思考设置、中文为主的浏览器界面，以及可保存的公开结果。打包后的 Windows 程序不需要另装 Python、Codex、Claude Code 或其他 agent 环境。
 
-它不以“还能再改哪里”为默认答案，而是直接帮助作者判断：这篇论文是否已经可以停止通用改稿，是否只值得再做一轮有限修改，还是仍需重新开启实质性修订。你可以选择标准审阅，也可以设置审稿人格与严格度，还可以加入目标期刊样本论文文件夹，使修改意见更贴近期刊语境和作者的实际需求。
+## 下载与快速开始
 
-它尤其照顾中国用户的实际使用环境：程序界面和核心结果以中文为主，DeepSeek 与 Kimi 是一等支持的国产模型选项，费用估算可按人民币显示，同时仍可使用 Gemini 作为额外的国际模型参照。对于同一篇稿件，用户还可以分别选择不同模型进行多次独立复审，再对照各轮结论；这样能够减少对单一模型表达风格、能力长项与盲点的依赖。当前版本会如实保留每次独立结果，不会伪造一个自动汇总的“多模型共识”。
+**[Windows EXE / Releases 下载入口](https://github.com/lensback940701/manuscript-review-studio/releases)** · **[完整使用指南](docs/STANDALONE.zh-CN.md)**
+
+> **2026-10-01 核实的发布状态：**本仓库尚无已发布的 GitHub Release，也没有可下载的 EXE 附件。当前修复已提供源码；旧的本地构建 EXE 不会自动包含后续源码修复，即使两者都显示 `0.6.4`。
+
+- **只想下载即用？** 打开上方 Releases。发布 Windows 包后，在该版本的 **Assets（资源）** 中下载 EXE 或 Windows 压缩包；如果是 ZIP，请先解压，再运行 `ManuscriptRevisionClosure.exe`。只有 **Source code (zip/tar.gz)** 时，下载到的是源码，不是 Windows 程序。
+- **现在就要运行最新源码？** 按[从源码运行](docs/STANDALONE.zh-CN.md#从源码运行)操作。GitHub 的 **Code → Download ZIP** 只下载源码，不会生成 EXE。
+- **完整分发 ZIP 里已经有 EXE？** 先完整解压，打开其中的 `release` 文件夹，再双击 `ManuscriptRevisionClosure.exe`。原包内的旧 EXE 早于当前修复；放在旁边的新源码不会更新它内嵌的程序。
+- **已经有 Windows 构建版？** 先在 Windows 用户环境变量中配置所选提供商的 API key，重新打开程序，再按下面五步操作。判断是否含修复时应核对构建对应的源码提交与校验值。
+
+### 第一次审阅，只需五步
+
+1. 打开程序，选择**完整当前稿件**。支持 DOCX 和带文本层 PDF 等格式；扫描图片不会自动 OCR。
+2. 先选**模式 1：标准审阅模式**，再选**模型提供商、模型、思考设置**。新审阅请将“既有最小收据”留空。
+3. 选择核心结果的输出语言。“中文解读”始终使用中文，并额外调用一次模型；只需要核心判断时可取消勾选。
+4. 核对文件与 provider/model，勾选稿件确认框，再点击“开始只读判断”。这会把稿件文本发送给所选提供商，可能产生 API 费用。
+5. 等待状态时间线结束，再保存完整公开结果 JSON，以及已生成的中文解读。开始下一轮前先保存，本程序没有多轮历史库。结束时点击“关闭本地程序”。
+
+页面在你自己电脑的 `127.0.0.1` 打开。界面在本机，模型分析仍需调用在线 API。具体见[提供商设置](docs/STANDALONE.zh-CN.md#提供商设置)与[常见问题](docs/STANDALONE.zh-CN.md#常见问题)。
+
+## 三种模式怎么选？
+
+| 你想解决的问题 | 选择 | 实际改变的尺度 |
+| --- | --- | --- |
+| 获得通用的整稿修订截止判断 | **模式 1：标准审阅模式**（`standard`） | 按十维学术标准审查，不额外叠加严格度或期刊参照。 |
+| 用顶刊苛求裁判寻找实质问题 | **模式 2：性格与尺度 → 严厉**（`strict`） | 对概念漂移、机制跳跃、方法盲区、证据薄弱和理论对话浅层化执行零容忍审查。 |
+| 按常规同行评审尺度判断 | **模式 2 → 中等**（`moderate`） | 平衡标准学术充分性与修改退化风险。这是模式 2 的默认选项。 |
+| 保护已经稳定的定稿，避免无休止边际小修 | **模式 2 → 宽松**（`lenient`） | 强力保护现有自洽框架；该尺度仅在颠覆核心结论、破坏理论或实证基础的重大硬伤下允许实质重开。 |
+| 严格对标特定期刊的已发表论文 | **模式 3：目标期刊对齐模式**（`journal_benchmark`） | 使用期刊名称、定位和至少五篇样本，严格审查学科理论对话、方法与证据颗粒度。 |
+
+三种模式互斥。模式 2（`strictness`）只有一个严格度下拉框，没有独立“人格”滑块或数值评分；模式 2 的宽严设置不会叠加到模式 3。思考开关与审稿尺度彼此独立：关闭思考不等于改用宽松尺度。
+
+模式 3 请先读[准备期刊样本](docs/STANDALONE.zh-CN.md#准备期刊样本)。点击“预检样本库相关性”会单独外发摘录、调用 API 并可能计费；它不是离线检查，也不是录用预测。
 
 <!-- ILLUSTRATION_SLOT_00_START -->
 ![Manuscript Review Studio 一站式独立运行概念总览：从选择稿件、目标期刊样本与模型，到整稿审阅、结论、修改方向、受保护优点、跨模型对照和结果保存。](docs/images/00-manuscript-review-studio-overview.png)
@@ -18,13 +49,13 @@ Manuscript Review Studio 是一款真正面向作者、能够一站式独立运�
 
 ## 作者实际能够得到什么
 
-- **真正一站式运行的 Windows 程序。** 文件选择、模型配置、审阅、结果查看、复制与保存都在一个本地界面中完成，不需要 Codex、Claude Code 或开发环境。
+- **面向独立运行的 Windows 程序。** 文件选择、模型配置、审阅、结果查看、复制与保存都在一个本地界面中完成，不需要 Codex、Claude Code 或开发环境。
 - **针对整篇论文作判断。** 它审查的是全文论证与章节之间的关系，而不是只点评几个孤立段落。
 - **对中国用户和国产模型友好。** 可以灵活切换 DeepSeek、Kimi，并保留 Gemini 作为额外对照。
-- **支持跨模型、多轮独立复审。** 同一稿件可以分别交由不同模型重复分析，通过对照结果获得更全面的审稿视角。
-- **不同品牌使用同一套严格标准。** 所有支持的模型都被置于统一审稿合同与校验门禁中，降低对单一品牌默认风格的依赖，但不虚构能够消除模型能力边界。
+- **支持跨模型独立复审。** 每轮先保存结果，再将同一稿件交给其他模型，对照各份已保存的判断。
+- **不同品牌遵守同一套输出合同。** 所有支持的模型都在所选模式下接受统一输出合同与校验门禁约束，降低对单一品牌默认风格的依赖，但不虚构能够消除模型能力边界。
 - **给出清楚的修改终点。** 输出有限且明确的结论、最重要的修改方向、应当保护的优点，以及单列的证据或投稿事项。
-- **全文外发前由你决定。** 程序会显示文件、provider 与 model，并要求本次运行重新确认后才会发送稿件。
+- **外发前由你核对。** 每次运行前核对文件、provider 与 model；样本相关性预检是另一项会外发摘录的操作。
 
 程序内部嵌入了更严格的多阶段审稿 harness，而不是接受一次自由发挥的 API 回答。无论选择哪个品牌，模型都要按照同一套审稿标准和一致性检查完成工作；普通作者不需要理解或配置这些机制。
 
@@ -42,7 +73,9 @@ Manuscript Review Studio 不保证模型判断永远正确，也不替代同行�
 
 其中的修订截止 Skill 针对 AI 辅助学术写作中常见的失败循环：每次检查都会生成下一轮修改，每次修补又引出新的问题，稿件始终无法到达一个可以说明理由的停止点。本 Skill 只读评估整篇当前稿件，给出紧凑的修订截止判断，但不向用户公开完整的内部审稿意见。
 
-当前发布候选版本：`0.2.1`
+内嵌 Skill 合同版本：`0.2.1` · Standalone 源码版本：`0.6.4`
+
+两条版本线分别管理。EXE 是否包含某项修复，应核对匹配的构建/发布记录，不能只看源码版本号。
 
 <!-- ILLUSTRATION_SLOT_01_START -->
 ![无限改稿循环经过受证据约束的截止门，随后分为证据核验、投稿准备与停止三条路径。](docs/images/01-closure-gate.png)
@@ -113,7 +146,7 @@ Manuscript Review Studio 不保证模型判断永远正确，也不替代同行�
 
 本 Skill 是修订路由辅助工具，不是事实认证、同行评审替代品、法律意见、期刊接收预测或投稿授权。
 
-## 安装
+## 可选：安装 Codex Skill
 
 克隆本仓库，并将仓库文件夹放到：
 
@@ -129,30 +162,15 @@ Windows 的常见位置是：
 
 安装后重启或刷新 Codex。运行时辅助程序不需要第三方 Python 依赖。
 
-## 独立 Windows 程序
+## 独立程序与实现说明
 
-仓库同时提供一个实验性 standalone 多阶段合同运行层，可用 DeepSeek、Kimi 或 Gemini API 在不安装
-Codex 的情况下执行只读截止输出合同。双击 EXE 会打开本地 GUI，并可选生成受
-十一键合同约束的中文结果解读、判断依据/原则/维度、简要局限和投稿前核对清单。
-GUI 还会按 API 返回的实际 token usage 和官方价格页估算本次费用。API key 只从环境变量读取。使用、构建和
-安全边界见 [`STANDALONE.zh-CN.md`](docs/STANDALONE.zh-CN.md)。Standalone 版本与
-Skill 版本分别管理，不改变本 Skill 的 `0.2.1` 合同版本。
+[完整应用指南](docs/STANDALONE.zh-CN.md)涵盖下载、提供商设置、三种模式、思考开关、源码/CLI 示例、费用与排错。GUI 以中文为主；核心判断可选择中文或英文。
 
-Standalone 0.6.4 使用可见的多模型下拉框，并按 DeepSeek、Kimi、Gemini
-具体模型的官方能力动态提供思考开关或强度选项；不支持的组合在调用前拒绝。
-核心判断和可选中文解读均使用结构化输出；Gemini 与 Kimi 额外提交精确 JSON Schema，
-并在本地只接受唯一完整对象及精确十一键合同。解读格式失败时仍记录该次调用的
-token usage 用于费用估算。程序不再设置 5000 token 的小型输出截断，而按提供商设置
-DeepSeek 384K、Kimi 128K、Gemini 64K 的高余量，并明确识别长度截断。Kimi/DeepSeek 以人民币官方价为原币，
-Gemini 以美元官方价为原币，再用带日期的 ECB USD/CNY 参考汇率显示双币种估算。
-核心判断采用两次绑定调用：十维整稿覆盖 pass 与真正独立、重新读取全文的 root-cause adjudication pass。coverage candidates 是第二阶段必须逐项复核的下限，不是上限；第二阶段可补充 coverage 漏报的 canonical、已观察、可定位且非重复的材料性维度。本地 contradiction gate 独立复核 coverage canonical SHA-256、candidate binding、双阶段肯定性 STOP、hold 和保护不变量。STOP 必须由两阶段对贡献、全稿论证、理论、方法、证据与章节连贯性作出肯定性充分判断；仅有谨慎、保护范围或没有夸大不能证明充分。
-0.6.4 在该门通过后先冻结 canonical machine state，再验证公开自然语言。中文展示缺陷最多触发一次不含稿件的 schema-bound presentation-only request，且该请求不自动重试；失败只形成可恢复 presentation HOLD，不清除机器裁决或 usage。`mrc-local-technical-preflight-1.0` 仅阻断文件不可读、不支持/提取失败、零有效文本、超限或配置失败；标题、固定章节、顺序、编号、ATX/Setext/plain、YAML/TOML front matter 只产生 best-effort 格式 advisory，不能改变 provider routing。每次可能外发全文的运行默认拒绝，必须重新完成 `mrc-provider-transmission-consent-1.0` 明确确认，并绑定当前文件 SHA-256、provider 与 model；取消为用户未授权状态，API=0，不伪造成稿件或技术 HOLD。第一次且唯一一次 coverage 使用 `mrc-whole-manuscript-coverage-3.0` 与 `mrc-semantic-manuscript-basis-1.0` 判断整稿实质材料是否充分，不得仅因非传统格式判不足。basis 不足时只发生一次 coverage 并准确记录 usage/cost，adjudication=0、无 machine verdict、无 presentation source；HTTP/schema/binding 失败仍是独立 technical HOLD。provider error 仅公开经过限长与脱敏的 status、code 和单行 detail。
-Kimi 覆盖阶段默认等待 300 秒，根因裁决和中文解读默认等待 900 秒；read/socket timeout
-coverage、adjudication、presentation repair 与 interpretation 均只允许一次物理 HTTP attempt；timeout、网络状态不明、429、502、503、504 都不会自动重发全文。收据把已知 usage 小计与 `UNKNOWN_POTENTIAL_CHARGE` 请求分开表达，避免把未知 usage 当作零费用；即使实时价格不可用，完整 usage 回执计数也不会被抹除。
+一次新的、成功的核心判断通常进行两次全文调用：整稿覆盖与独立根因裁决。本地门禁验证两阶段绑定并保留所选审稿尺度。STOP 需要双阶段肯定性充分判断，不能由空问题列表自动得出。可选中文解读增加一次调用；公开展示的定向修复可能增加一次不含稿件正文的调用。timeout、网络状态不明以及 HTTP 429/502/503/504 均不会自动重发全文。
 
-动态 adjudication schema 在 dispatch 前经过 `mrc-schema-definition-lint-1.0`。`mrc-dynamic-adjudication-schema-3.0` 对零候选采用 `minItems=0`、有限 canonical 上限和非空 canonical enum，使独立第二阶段可恢复已观察、可定位的 coverage 漏报，同时不生成 provider 非法的 `enum: []`。未知、重复、不可定位、臆测或无解释的补充均 fail closed。任何 schema definition 错误均在本地以 `SCHEMA_DEFINITION_INVALID` 停止，不会形成该阶段的付费请求。
+合同变化见[更新记录](docs/CHANGELOG.zh-CN.md)。历史工程审计描述其标题所指的快照，不作为当前使用说明。独立 API 运行器与可选 Codex Skill 的运行环境不同；Skill 的“不联网”边界不能用于描述独立程序的模型请求。
 
-## 调用
+## 可选：调用 Codex Skill
 
 示例：
 

@@ -2,13 +2,44 @@
 
 [中文说明](README.zh-CN.md)
 
-**Open the Windows app, choose a model, add your complete manuscript, and get a rigorous second opinion—without Codex, Claude Code, ChatGPT Desktop, or any agent environment.**
+**Read-only whole-manuscript review with DeepSeek, Kimi, or Gemini: decide whether to stop revising, make one bounded round, or reopen substantive revision.**
 
-Manuscript Review Studio is a genuinely standalone, one-stop desktop application for authors. Its local interface covers manuscript and target-journal sample selection, provider/model choice, transmission consent, review execution, result display, copying, and saving. The packaged Windows application connects directly to DeepSeek, Kimi, or Gemini with your own API key; it does not require another AI coding tool, IDE extension, or command-line agent to stay open in the background.
+The application runs locally and connects directly to your chosen model provider using your API key. It has three review modes, model-specific thinking controls, a Chinese-first browser interface, and saveable public results. A packaged Windows build does not require Python, Codex, Claude Code, or another agent environment.
 
-Instead of returning an endless list of generic improvements, it is built to answer the question authors actually face: should this manuscript stop general revision, receive one bounded round, or reopen substantive revision? You can use a standard review, set a reviewer personality and strictness, or add a folder of target-journal sample papers so the review better reflects the journal context and your own priorities.
+## Download and start here
 
-It is especially practical for Chinese users: the application and core output are Chinese-first, DeepSeek and Kimi are first-class model choices, and usage estimates can be displayed in CNY. The same manuscript can also be reviewed in separate runs by different models. Comparing those independent results can reveal more than relying on one model's preferred style, strengths, or blind spots; the current release keeps each run visible rather than inventing an automatic cross-model consensus.
+**[Windows EXE / Releases](https://github.com/lensback940701/manuscript-review-studio/releases)** · **[Complete usage guide](docs/STANDALONE.md)**
+
+> **Availability checked 2026-10-01:** this repository has no published GitHub Release or downloadable EXE asset yet. The current fixes are available as source. An older locally built EXE does not automatically include later source changes, even if both display `0.6.4`.
+
+- **Want a ready-to-run app?** Check the Releases link above. Once a Windows package is published, open its **Assets**, download the Windows EXE/package, and extract a ZIP before running `ManuscriptRevisionClosure.exe`. If only **Source code (zip/tar.gz)** is present, it is not the Windows application.
+- **Want to use the current source now?** Follow [Run from source](docs/STANDALONE.md#run-from-source). GitHub's **Code → Download ZIP** downloads source; it does not create an EXE.
+- **Have a complete distribution ZIP with an EXE?** Extract it fully, open its `release` folder, and double-click `ManuscriptRevisionClosure.exe`. The original bundle's EXE predates the current fixes; new source files beside it do not update the embedded app.
+- **Already have a Windows build?** Set your provider API key in your Windows user environment, reopen the app, and follow the five steps below. Check the build's source revision and checksum before assuming it includes a fix.
+
+### First review in five steps
+
+1. Open the app and choose your **complete current manuscript**. Supported inputs include DOCX and text-layer PDF; scanned images are not OCR'd.
+2. Choose **Mode 1: Standard**, your **provider/model**, and its **thinking setting**. Leave the prior-receipt field empty for a new review.
+3. Choose the core result language. The optional interpretation is always Chinese and adds a separate model request; uncheck it if you only need the core result.
+4. Verify the file and provider/model, check the manuscript confirmation box, and start the read-only review. This sends manuscript text to that provider and may incur API charges.
+5. Wait for the stage timeline to finish, then save the public JSON and, if generated, the Chinese interpretation. Save before starting another run; the app has no multi-run history. Use **Close local program** when done.
+
+The UI opens at `127.0.0.1` on your own computer. The interface is local; model analysis uses the provider's online API. See [Provider setup](docs/STANDALONE.md#provider-setup) and [Troubleshooting](docs/STANDALONE.md#troubleshooting).
+
+## Which review mode should I use?
+
+| Your goal | Select | What changes |
+| --- | --- | --- |
+| A general whole-paper closure judgment | **Mode 1: Standard** (`standard`) | The standard ten-dimension academic review, without an added strictness or journal profile. |
+| A deliberately demanding top-tier referee | **Mode 2: Personality and scale → Strict** (`strict`) | Zero-tolerance scrutiny of conceptual drift, mechanism gaps, methodological blind spots, weak evidence, and shallow theoretical engagement. |
+| A balanced conventional referee | **Mode 2 → Moderate** (`moderate`) | Standard academic sufficiency balanced against revision regression risk. This is Mode 2's default. |
+| Protect a stable final draft from endless marginal edits | **Mode 2 → Lenient** (`lenient`) | Strong regression protection; the profile reserves substantive reopening for major flaws that undermine the core conclusion or theoretical/empirical basis. |
+| A stringent comparison with a chosen journal's published work | **Mode 3: Target journal benchmark** (`journal_benchmark`) | Uses the journal name/scope and a folder containing at least five sample papers to apply its demanding theoretical, methodological, and evidentiary benchmark. |
+
+The three modes are alternatives. Mode 2 (`strictness`) has one strictness selector, not a separate personality slider or numerical score. Its selection does not carry over into Mode 3. Thinking controls are independent of review strictness: switching thinking off does not select a lenient standard.
+
+For Mode 3, read [Prepare journal samples](docs/STANDALONE.md#prepare-journal-samples) before clicking the relevance precheck: that button makes a separate, potentially billable API call and sends excerpts. It does not perform an offline check or predict acceptance.
 
 <!-- ILLUSTRATION_SLOT_00_START -->
 ![Concept overview of the standalone Manuscript Review Studio workflow, from manuscript and journal-sample selection through review, verdict, protected strengths, comparison, and saved results.](docs/images/00-manuscript-review-studio-overview.png)
@@ -18,13 +49,13 @@ It is especially practical for Chinese users: the application and core output ar
 
 ## What authors get
 
-- **A real one-stop Windows program.** Complete file selection, model configuration, review, result viewing, copying, and saving in one local interface—without Codex, Claude Code, or a development environment.
+- **A standalone Windows application design.** Complete file selection, model configuration, review, result viewing, copying, and saving in one local interface—without Codex, Claude Code, or a development environment.
 - **A whole-manuscript decision.** The app evaluates the paper as a complete argument instead of commenting on isolated paragraphs.
 - **China-friendly model choice.** Switch flexibly between DeepSeek and Kimi, while retaining Gemini as an additional international comparison.
-- **Cross-model second opinions.** Run the same manuscript independently with different models and compare their judgments for broader coverage.
-- **One strict standard across providers.** Every supported model is placed inside the same review contract and validation gates, reducing dependence on any one brand's default response style without claiming to eliminate model limitations.
+- **Cross-model second opinions.** Save each run, then review the same manuscript independently with another model and compare the saved judgments.
+- **Consistent contracts across providers.** Every supported model uses the chosen mode within the same output contract and validation gates, reducing dependence on any one brand's default response style without claiming to eliminate model limitations.
 - **A clear revision endpoint.** Receive a bounded verdict, the most important revision directions, protected strengths, and separate evidence or submission reminders.
-- **Control before transmission.** The app shows the selected file, provider, and model and asks for fresh confirmation before sending manuscript text.
+- **Control over transmission.** Check the selected file, provider, and model before each run; journal relevance precheck is a separate transmitting action.
 
 Under the surface, the application embeds a stricter multi-stage harness rather than accepting one free-form API reply. It asks each supported model to work through the same review standards and consistency checks; authors do not need to understand or configure that machinery.
 
@@ -46,7 +77,9 @@ The smaller, Skill-only distribution remains available as
 
 The embedded closure skill addresses a recurring failure mode in AI-assisted academic writing: every new review generates another round of edits, each repair creates a different concern, and the manuscript never reaches a defensible stopping point. It performs a read-only whole-manuscript assessment and returns a compact closure decision without publishing the detailed internal review.
 
-Current release candidate: `0.2.1`
+Embedded Skill contract: `0.2.1` · Standalone source version: `0.6.4`
+
+These are separate version tracks. An EXE needs a matching build/release record; the source version alone does not identify which fixes it contains.
 
 <!-- ILLUSTRATION_SLOT_01_START -->
 ![An endless manuscript revision loop passes through an evidence-bound closure gate and becomes separate evidence, submission, and stop paths.](docs/images/01-closure-gate.png)
@@ -117,7 +150,7 @@ When the verdict requires revision, the card may end with this conditional tip:
 
 This is a revision-routing aid, not factual certification, peer-review replacement, legal advice, journal acceptance prediction, or submission authorization.
 
-## Installation
+## Optional Codex Skill installation
 
 Clone the repository and place the repository folder at:
 
@@ -133,48 +166,15 @@ On Windows, the usual location is:
 
 Restart or refresh Codex after installation. No third-party Python dependency is required by the runtime helper.
 
-## Standalone Windows application
+## Standalone application and implementation details
 
-The repository also contains an experimental standalone runtime that can apply
-the same read-only closure contract through the DeepSeek, Kimi, or Gemini API without a
-Codex installation. Double-clicking the executable opens a localhost GUI with
-an optional contract-bounded Chinese interpretation, assessment basis and dimensions,
-brief limitations, pre-submission checklist, and an actual-usage cost estimate from
-official pricing sources.
-API keys are read only from environment variables. See
-[`STANDALONE.zh-CN.md`](docs/STANDALONE.zh-CN.md) for usage, build instructions, and
-security boundaries. The standalone and Skill versions are managed separately;
-this does not change the Skill's `0.2.1` contract version.
+Use the [English application guide](docs/STANDALONE.md) for downloads, provider setup, all modes, thinking controls, source/CLI examples, costs, and troubleshooting. The GUI is Chinese-first; the core result supports English and Chinese.
 
-Standalone 0.6.4 is a bounded multi-stage runner with a visible multi-model selector and model-specific
-reasoning controls. Unsupported provider/model/reasoning combinations fail
-before an API request instead of being silently ignored.
-Core assessment and optional interpretation requests use structured output.
-Gemini and Kimi requests additionally carry an exact JSON Schema, while
-the local validator accepts only one complete object with the exact eleven-key
-contract. Usage from a contract-invalid interpretation response remains included
-in the cost estimate. The former 5,000-token application cap was replaced with
-provider-scale headroom (DeepSeek 384K, Kimi 128K, Gemini 64K) and explicit
-length-truncation detection.
-Kimi and DeepSeek are priced natively in CNY, Gemini in USD, with dated ECB
-USD/CNY reference-rate conversion for dual-currency display.
-Core assessment uses two bound calls: a ten-dimension whole-manuscript coverage
-pass and a genuinely independent full-text root-cause adjudication pass. Coverage
-candidates are a required lower bound, not a ceiling: adjudication must account for
-each candidate and may add only grounded, canonical, non-duplicate dimensions that
-coverage missed. A local contradiction gate verifies the canonical coverage SHA-256,
-candidate binding, affirmative STOP sufficiency, hold preservation, and protected
-invariants before the deterministic reducer runs. STOP requires positive sufficiency
-from both passes for contribution, whole-paper argument, theory, methods, evidence,
-and section coherence; careful scope or non-overclaiming alone is not sufficient.
-After that gate, 0.6.4 freezes the canonical machine state before validating public-language fields. A Chinese presentation defect may trigger exactly one schema-bound presentation-only request with no manuscript text and no automatic retry; failure produces a recoverable presentation HOLD without erasing the machine verdict or usage. Protected source identity and localizable display text are bound separately, and each request emits one idempotent terminal event. Coverage, adjudication, presentation repair, and interpretation each permit exactly one physical HTTP attempt: timeout, network ambiguity, 429, 502, 503, and 504 never trigger an automatic full-request resend. Receipts distinguish known usage from `UNKNOWN_POTENTIAL_CHARGE` attempts; known usage receipt counts remain intact even when a live price quote is unavailable. `mrc-local-technical-preflight-1.0` blocks only unreadable/unsupported/empty/over-limit inputs and configuration failures. Titles, section labels, ordering, numbering, ATX/Setext/plain text, and YAML/TOML front matter are best-effort formatting advisories and cannot change provider routing. Every provider-bound run defaults to refusal and requires a fresh `mrc-provider-transmission-consent-1.0` confirmation bound to file SHA-256, provider, and model. The first and only coverage request uses `mrc-whole-manuscript-coverage-3.0` plus `mrc-semantic-manuscript-basis-1.0` to decide whether substantive whole-manuscript material is sufficient; it must not infer insufficiency merely from non-traditional formatting. An insufficient basis consumes exactly one coverage attempt and records usage/cost, starts no adjudication, forms no machine verdict or presentation source, and remains distinct from technical failures. Provider errors expose only bounded sanitized status, code, and detail.
+A fresh successful core review normally uses two full-manuscript calls: coverage and independent adjudication. Local gates validate their binding and preserve the chosen review standard. STOP requires affirmative sufficiency from both passes; an empty issue list is not enough. Optional Chinese interpretation adds a call. A presentation-only repair may add one call without manuscript text. Timeouts, network ambiguity, and HTTP 429/502/503/504 never trigger an automatic full-request resend.
 
-Dynamic adjudication schemas are linted before dispatch under `mrc-schema-definition-lint-1.0`. Under `mrc-dynamic-adjudication-schema-3.0`, a zero-candidate result uses `minItems=0`, a finite canonical maximum, and a non-empty canonical enum, so independent adjudication can recover a grounded coverage miss without producing provider-invalid `enum: []`. Unknown, duplicate, unlocatable, speculative, or unexplained additions fail closed. Any invalid schema definition stops locally with `SCHEMA_DEFINITION_INVALID`; it is never sent as a paid provider request.
-Kimi uses a 300-second coverage window and 900-second adjudication and interpretation
-windows. Read/socket timeouts, network ambiguity, and HTTP 429, 502, 503, and 504
-all stop after the single physical attempt; the full request is never automatically resent.
+The [Changelog](docs/CHANGELOG.md) records contract changes. Historical engineering audits describe their named snapshots and are not current end-user instructions. The standalone API runtime and the optional Codex Skill have different execution environments; the Skill's no-network boundary does not describe the standalone provider calls.
 
-## Invocation
+## Optional Codex Skill invocation
 
 Example:
 

@@ -1,9 +1,12 @@
 # Windows 异机运行与 127.0.0.1 说明
 
+> 当前启动与下载入口见[独立程序使用指南](STANDALONE.zh-CN.md)。下文区分打包设计与实际验证；旧包 EXE 不会因旁边源码更新而更新，不能用旧验收收据证明新修复已进入二进制。
+
+
 ## 结论
 
-`127.0.0.1` 不是原开发电脑的专属地址，而是每台电脑自己的 loopback 地址。把
-`ManuscriptRevisionClosure.exe` 复制到另一台受支持的 Windows x64 电脑后，程序会在
+`127.0.0.1` 不是原开发电脑的专属地址，而是每台电脑自己的 loopback 地址。将匹配的 Windows 构建
+`ManuscriptRevisionClosure.exe` 放到另一台兼容 Windows x64 电脑后，其设计是在
 那台电脑上重新绑定一个随机本地端口、生成新的随机访问 token，并用那台电脑的默认
 浏览器打开页面。因此，本地 GUI 的运行不依赖原项目目录、原电脑端口或 Codex 安装。
 
@@ -19,14 +22,14 @@
 - 在新电脑的用户环境中设置 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`/`KIMI_API_KEY`
   或 `GEMINI_API_KEY`。key 不随 EXE 搬运。
 
-单文件 EXE 已打包 Python 运行时与文档解析依赖，不要求目标电脑安装 Python、Codex、
+单文件 EXE 的打包设计包含 Python 运行时与文档解析依赖，不要求目标电脑安装 Python、Codex、
 本仓库或 Skill。稿件路径可包含中文；输入仍必须是程序支持的文件类型。
 
 ## 已验证与未保证
 
-验收会把最终 EXE 单独复制到一个全新临时目录，在不依赖源码当前目录的情况下运行
-`--version`、本地 GUI loopback smoke，以及三家 provider 的本地 mock 请求。该检查可以
-证明打包资源和相对路径没有绑定在开发工作区。
+现有冻结版验收脚本会从临时工作目录启动指定 EXE，检查 `--version`、本地 GUI loopback 和本地 mock 请求。**改变工作目录不等于把 EXE 本身复制到一台干净电脑或独立分发目录。** 不能据此宣称已完成异机部署验证。静态检查可以确认原分发 EXE 是包含 Python、pypdf、SSL 与资源的 x64 单文件包，但不能替代实际启动与运行验收。
+
+原分发包的 EXE 早于当前源码修复。新修复必须先重新构建到新的 EXE，再对那一份二进制记录源码提交、SHA-256 和实际验收结果。分发前应将最终 EXE/分发包复制到独立目录，并在目标 Windows 环境验证；未执行的验证应明确标注，不能复用旧收据作结论。
 
 当前构建不保证 macOS、Linux、Windows ARM、受企业代理强制 TLS 解密的环境，或禁止
 loopback/未知 EXE 的强管控终端。浏览器未能自动打开时，程序会在可见控制台给出本地

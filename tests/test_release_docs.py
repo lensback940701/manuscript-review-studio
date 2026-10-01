@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import struct
 import unittest
 from pathlib import Path
@@ -26,6 +27,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
             "ILLUSTRATIONS": ROOT / "docs",
             "PROVENANCE": ROOT / "docs",
             "SECURITY": ROOT / ".github",
+            "STANDALONE": ROOT / "docs",
         }
         for stem, directory in guide_roots.items():
             english_path = directory / f"{stem}.md"
@@ -34,6 +36,46 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.assertTrue(chinese_path.is_file())
             self.assertIn(f"[中文说明]({stem}.zh-CN.md)", english_path.read_text(encoding="utf-8"))
             self.assertIn(f"[English]({stem}.md)", chinese_path.read_text(encoding="utf-8"))
+
+    def test_user_guides_expose_download_routes_and_all_modes(self) -> None:
+        release_url = "https://github.com/lensback940701/manuscript-review-studio/releases"
+        for filename in ("README.md", "README.zh-CN.md", "docs/STANDALONE.md", "docs/STANDALONE.zh-CN.md"):
+            content = (ROOT / filename).read_text(encoding="utf-8")
+            self.assertIn(release_url, content)
+            self.assertIn("ManuscriptRevisionClosure.exe", content)
+            self.assertIn("Source code (zip/tar.gz)", content)
+            for mode in ("standard", "strictness", "journal_benchmark"):
+                self.assertIn(f"`{mode}`", content)
+            for strictness in ("strict", "moderate", "lenient"):
+                self.assertIn(f"`{strictness}`", content)
+        for filename in ("STANDALONE.md", "STANDALONE.zh-CN.md"):
+            content = (ROOT / "docs" / filename).read_text(encoding="utf-8")
+            for key in ("DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "GEMINI_API_KEY"):
+                self.assertIn(key, content)
+            self.assertIn("UNKNOWN_POTENTIAL_CHARGE", content)
+            self.assertIn("--consent-to-provider-transmission", content)
+            self.assertIn("--gui-no-browser", content)
+
+    def test_documented_cli_examples_parse_and_use_registered_reasoning(self) -> None:
+        from standalone.cli import build_parser
+        from standalone.providers import PROVIDERS, validate_reasoning_option
+
+        parser = build_parser()
+        for filename in ("STANDALONE.md", "STANDALONE.zh-CN.md"):
+            seen_modes = set()
+            for line in (ROOT / "docs" / filename).read_text(encoding="utf-8").splitlines():
+                if "-m standalone" not in line or "--mode " not in line:
+                    continue
+                argv = shlex.split(line.split("-m standalone", 1)[1])
+                args = parser.parse_args(argv)
+                self.assertTrue(args.consent_to_provider_transmission)
+                self.assertTrue(args.output)
+                validate_reasoning_option(args.provider, args.model or PROVIDERS[args.provider].default_model, args.reasoning)
+                if args.mode == "journal_benchmark":
+                    self.assertTrue(args.sample_papers_dir)
+                    self.assertTrue(args.target_journal_name)
+                seen_modes.add(args.mode)
+            self.assertEqual({"standard", "strictness", "journal_benchmark"}, seen_modes)
 
     def test_five_illustration_slots_are_stable(self) -> None:
         for filename in ("README.md", "README.zh-CN.md"):
