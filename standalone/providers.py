@@ -29,6 +29,56 @@ class ProviderRequestError(RuntimeError):
         self.request_receipts = tuple(dict(item) for item in request_receipts)
 
 
+class _CompletionEnvelopeError(ProviderRequestError):
+    """An unusable response described only by a fixed, safe local diagnostic."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+_COMPLETION_FINISH_REASONS = frozenset(
+    {"stop", "length", "content_filter", "tool_calls", "function_call", "insufficient_system_resource"}
+)
+
+
+def _completion_finish_reason(payload: Any) -> str | None:
+    """Keep only registered protocol values, never arbitrary provider text."""
+
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    choice = choices[0] if isinstance(choices, list) and choices else None
+    value = choice.get("finish_reason") if isinstance(choice, dict) else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value in _COMPLETION_FINISH_REASONS else None
+
+
+def _completion_usage(payload: Any) -> dict[str, int]:
+    """Read allowlisted token counts independently of final-content validity."""
+
+    usage_raw = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage_raw, dict):
+        return {}
+    usage: dict[str, int] = {}
+    for key in (
+        "prompt_tokens", "completion_tokens", "total_tokens",
+        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "cached_tokens", "reasoning_tokens",
+    ):
+        value = usage_raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            usage[key] = value
+    for field, key in (
+        ("prompt_tokens_details", "cached_tokens"),
+        ("completion_tokens_details", "reasoning_tokens"),
+    ):
+        details = usage_raw.get(field)
+        value = details.get(key) if isinstance(details, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            usage[key] = value
+    return usage
+
+
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 600.0
 _STAGE_TIMEOUT_SECONDS: dict[str, dict[str, float]] = {
     "deepseek": {
@@ -593,6 +643,8 @@ class ChatCompletionClient:
             "retry_after": None,
             "error_class": None,
             "error_summary": None,
+            "completion_error_code": None,
+            "finish_reason": None,
             "provider_error_detail_contract_version": PROVIDER_ERROR_DETAIL_CONTRACT_VERSION,
             "provider_error_status": None,
             "provider_error_code": None,
@@ -618,14 +670,17 @@ class ChatCompletionClient:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 receipt["http_status"] = int(getattr(response, "status", 200))
                 response_payload = json.loads(response.read().decode("utf-8"))
-            completion = self._parse_payload(response_payload)
-            receipt["provider_outcome"] = "SUCCEEDED"
-            receipt["usage"] = dict(completion.usage)
+            # Preserve safe response metadata even when there is no usable
+            # final content. Never substitute reasoning_content for an answer.
+            receipt["usage"] = _completion_usage(response_payload)
+            receipt["finish_reason"] = _completion_finish_reason(response_payload)
             receipt["usage_status"] = (
                 "COMPLETE"
-                if {"prompt_tokens", "completion_tokens"}.issubset(completion.usage)
-                else "PARTIAL" if completion.usage else "UNKNOWN"
+                if {"prompt_tokens", "completion_tokens"}.issubset(receipt["usage"])
+                else "PARTIAL" if receipt["usage"] else "UNKNOWN"
             )
+            completion = self._parse_payload(response_payload)
+            receipt["provider_outcome"] = "SUCCEEDED"
             receipt["finished_at"] = _utc_now()
             return CompletionResult(
                 content=completion.content,
@@ -701,55 +756,72 @@ class ChatCompletionClient:
                 request_receipts=(receipt,),
             ) from exc
         except (UnicodeDecodeError, json.JSONDecodeError, ProviderRequestError) as exc:
+            known_failure = isinstance(exc, _CompletionEnvelopeError)
+            summary = (
+                str(exc) if known_failure
+                else "provider returned an invalid completion envelope"
+            )
             receipt.update(
                 {
                     "provider_outcome": "UNKNOWN",
-                    "error_class": type(exc).__name__,
-                    "error_summary": "provider completion failed the bounded response envelope",
+                    "error_class": "ProviderRequestError" if known_failure else type(exc).__name__,
+                    "error_summary": summary,
+                    "completion_error_code": (
+                        exc.code if known_failure else "INVALID_COMPLETION_ENVELOPE"
+                    ),
                     "finished_at": _utc_now(),
                 }
             )
-            raise ProviderRequestError(
-                "provider returned an unusable completion envelope",
-                request_receipts=(receipt,),
-            ) from exc
+            raise ProviderRequestError(summary, request_receipts=(receipt,)) from exc
 
     def _parse_payload(self, payload: Any) -> CompletionResult:
-        try:
-            choice = payload["choices"][0]
-            content = choice["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderRequestError("provider response is missing choices[0].message.content") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ProviderRequestError("provider returned an empty model response")
-        usage_raw = payload.get("usage", {}) if isinstance(payload, dict) else {}
-        usage: dict[str, int] = {}
-        if isinstance(usage_raw, dict):
-            for key in (
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "prompt_cache_hit_tokens",
-                "prompt_cache_miss_tokens",
-                "cached_tokens",
-                "reasoning_tokens",
-            ):
-                value = usage_raw.get(key)
-                if isinstance(value, int) and value >= 0:
-                    usage[key] = value
-            details = usage_raw.get("prompt_tokens_details")
-            if isinstance(details, dict):
-                cached = details.get("cached_tokens")
-                if isinstance(cached, int) and cached >= 0:
-                    usage["cached_tokens"] = cached
-            completion_details = usage_raw.get("completion_tokens_details")
-            if isinstance(completion_details, dict):
-                reasoning = completion_details.get("reasoning_tokens")
-                if isinstance(reasoning, int) and reasoning >= 0:
-                    usage["reasoning_tokens"] = reasoning
-        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
-        if not isinstance(finish_reason, str) or not finish_reason.strip():
-            finish_reason = None
+        if not isinstance(payload, dict):
+            raise _CompletionEnvelopeError(
+                "INVALID_COMPLETION_ENVELOPE", "provider returned an invalid completion envelope"
+            )
+        choices = payload.get("choices")
+        if "choices" not in payload or choices == []:
+            raise _CompletionEnvelopeError(
+                "MISSING_COMPLETION_CONTENT", "provider response is missing a final completion"
+            )
+        if not isinstance(choices, list) or not isinstance(choices[0], dict):
+            raise _CompletionEnvelopeError(
+                "INVALID_COMPLETION_ENVELOPE", "provider returned an invalid completion envelope"
+            )
+        choice = choices[0]
+        finish_reason = _completion_finish_reason(payload)
+        if finish_reason == "length":
+            raise _CompletionEnvelopeError(
+                "TRUNCATED_COMPLETION", "provider truncated the completion at its output limit"
+            )
+        message = choice.get("message")
+        refusal = message.get("refusal") if isinstance(message, dict) else None
+        if finish_reason == "content_filter" or (isinstance(refusal, str) and refusal.strip()):
+            raise _CompletionEnvelopeError(
+                "REFUSED_COMPLETION", "provider refused or filtered the completion"
+            )
+        if "message" not in choice:
+            raise _CompletionEnvelopeError(
+                "MISSING_COMPLETION_CONTENT", "provider response is missing final message content"
+            )
+        if not isinstance(message, dict):
+            raise _CompletionEnvelopeError(
+                "INVALID_COMPLETION_ENVELOPE", "provider returned an invalid completion message"
+            )
+        if "content" not in message:
+            raise _CompletionEnvelopeError(
+                "MISSING_COMPLETION_CONTENT", "provider response is missing final message content"
+            )
+        content = message["content"]
+        if content is None or (isinstance(content, str) and not content.strip()):
+            raise _CompletionEnvelopeError(
+                "EMPTY_COMPLETION_CONTENT", "provider returned empty final message content"
+            )
+        if not isinstance(content, str):
+            raise _CompletionEnvelopeError(
+                "INVALID_COMPLETION_CONTENT", "provider returned invalid final message content"
+            )
+        usage = _completion_usage(payload)
         model = payload.get("model", self.config.model) if isinstance(payload, dict) else self.config.model
         if not isinstance(model, str) or not model.strip():
             model = self.config.model
@@ -757,5 +829,5 @@ class ChatCompletionClient:
             content=content.strip(),
             model=model.strip(),
             usage=usage,
-            finish_reason=finish_reason.strip() if finish_reason else None,
+            finish_reason=finish_reason,
         )

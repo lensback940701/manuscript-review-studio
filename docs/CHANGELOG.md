@@ -2,6 +2,14 @@
 
 [中文说明](CHANGELOG.zh-CN.md)
 
+## Unreleased — Thinking-independent mode contracts
+
+- Removed an invalid lenient-mode status label and separated mode labels from stage-specific JSON field rules. The original strict/moderate/lenient thresholds and journal comparison criteria are unchanged.
+- Made coverage field combinations and adjudication consistency explicit; public card/receipt formats are rendered by the runtime rather than emitted by either internal stage.
+- Preserved the selected provider reasoning controls, strict schema validation, and one-attempt policy. No hidden reasoning is required, and malformed output is not silently converted into a successful assessment.
+- Retained bounded completion diagnostics and reported token usage when a provider returns no usable final content; no raw response, refusal text, or reasoning content is persisted.
+- Added offline OFF/ON regression coverage across the registered toggle-capable DeepSeek, Kimi, and Gemini model contracts, all three modes, strictness levels, and all four verdicts. Synthetic HTTP fixtures verify application contracts, not live model quality or equivalence. The originally reported live failure remains unconfirmed without the failing provider/model and error receipt.
+
 ## Standalone 0.6.4 — Intake and technical-HOLD diagnostics repair
 
 - Added a versioned technical-HOLD receipt so an intake-PASS execution failure uses the same reason, action, and failed stage across the Closure Card, machine receipt, minimal receipt, GUI, and saved JSON.
