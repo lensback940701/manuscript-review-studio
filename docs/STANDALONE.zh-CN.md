@@ -8,12 +8,14 @@
 
 **[Windows 下载 / GitHub Releases](https://github.com/lensback940701/manuscript-review-studio/releases)**
 
-**当前 Windows 分发包：**Release 的 **Assets（资源）** 中如已出现 `manuscript-review-studio-v0.6.4.1-windows-x64.zip`，其中包含由当前源码构建并验收的 EXE 与双语指南。运行时兼容版本仍为 `0.6.4`；分发版本 `v0.6.4.1` 及新的源码提交/SHA-256 收据用于区分旧 EXE。把新 `.py` 文件放在旧 EXE 旁边不会更新程序。具体验证范围与限制见 [Windows 发布验证](WINDOWS_RELEASE.zh-CN.md)。
+**v0.6.4.1 已发布（2026-10-01）：**[下载完整 Windows x64 ZIP](https://github.com/lensback940701/manuscript-review-studio/releases/download/v0.6.4.1/manuscript-review-studio-v0.6.4.1-windows-x64.zip) · [发布记录与校验文件](https://github.com/lensback940701/manuscript-review-studio/releases/tag/v0.6.4.1)。完整解压后双击 `release/ManuscriptRevisionClosure.exe`，无需安装 Python。运行时兼容版本仍为 `0.6.4`，以分发版本、源码提交和 SHA-256 识别实际构建。
+
+**本次 Windows 实测：**391 项单元测试、23 + 59 项对抗性探针、22 项既有冻结版验收与 61 项多模式冻结版验收全部通过。另核对了空目录独立 EXE 启动、中文重定向输出、本地 GUI 状态与安全关闭。全部模型请求使用本机模拟服务；未实测真实提供商、浏览器渲染或原生对话框。模式 3 已知限制没有因此修复。[完整验证范围](WINDOWS_RELEASE.zh-CN.md) · [发布说明勘误](https://github.com/lensback940701/manuscript-review-studio/releases/tag/v0.6.4.1)。
 
 | 你下载到的内容 | 从哪里开始 |
 | --- | --- |
 | 确实包含 `release/ManuscriptRevisionClosure.exe` 的完整分发 ZIP | **先完整解压，再打开解压目录下的 `release` 文件夹，双击 `ManuscriptRevisionClosure.exe`。** 不要在压缩包浏览窗口中直接运行。 |
-| Release 的 **Assets（资源）** 中发布的 Windows EXE/压缩包 | 先看该版本的构建说明与校验值，下载并按需解压，再打开 EXE。只有实际发布此类附件后，这条下载路径才可用。 |
+| Release 的 **Assets（资源）** 中发布的 Windows EXE/压缩包 | 先看该版本的构建说明与校验值，下载并按需解压，再打开 EXE。v0.6.4.1 已提供这些附件。 |
 | GitHub **Code → Download ZIP** 或 **Source code (zip/tar.gz)** | 这是源码，不是已打包程序。请按[从源码运行](#从源码运行)或[在 Windows 构建](#在-windows-构建)操作。 |
 
 Windows 单文件构建的设计是自带 Python 运行时和文档解析依赖。你仍需兼容的 Windows x64 电脑、浏览器、提供商网络访问及自己的 API key。发现 EXE 或旧构建收据，不代表它来自当前源码；请保留同一分发包的发布记录和校验值，不要把旧 EXE 与新源码混在一起当作同一版本。
@@ -76,7 +78,7 @@ Windows 单文件构建的设计是自带 Python 运行时和文档解析依赖�
 
 期刊标准刻意保持严格：学科核心理论应成为论证的构成性支柱，而非外围装饰；方法与证据细节需要对标样本；存在真实期刊尺度差距时，不能仅以“已有自洽”或“避免过度修改”为由放行 STOP。
 
-**当前范围与限制：**样本文件在本地读取，但核心审阅只接收按文件名排序的前八篇、每篇最多 400 字符的摘录。程序不逐篇全文审阅全部样本，也不独立核验其发表状态。样本读取失败时，当前核心运行器可能退回不含期刊画像的审阅。先解决预检/文件错误再运行，不要把样本目录无效时的结果当作已经完成有效期刊对标；增加很多文件也不保证它们的内容全部被评估。
+**当前范围与限制：**样本文件在本地读取，但核心审阅只接收按文件名排序的前八篇、每篇最多 400 字符的摘录。程序不逐篇全文审阅全部样本，也不独立核验其发表状态；没有从样本论文单独提取期刊评估量规（rubric）的独立阶段。样本读取失败时，当前核心运行器可能退回不含期刊画像的审阅。先解决预检/文件错误再运行，不要把样本目录无效时的结果当作已经完成有效期刊对标；增加很多文件也不保证它们的内容全部被评估。
 
 ## 思考设置
 

@@ -10,11 +10,13 @@ The application runs locally and connects directly to your chosen model provider
 
 **[Windows EXE / Releases](https://github.com/lensback940701/manuscript-review-studio/releases)** · **[Complete usage guide](docs/STANDALONE.md)**
 
-> **Current Windows distribution:** look for `manuscript-review-studio-v0.6.4.1-windows-x64.zip` in Release **Assets**. The verified workflow publishes it only after the source tests, copied-EXE smoke checks, and frozen mock acceptance pass. Runtime compatibility version remains `0.6.4`; use the attached source commit and SHA-256 receipts to identify the actual build.
+> **v0.6.4.1 released (2026-10-01):** [Download the complete Windows x64 ZIP](https://github.com/lensback940701/manuscript-review-studio/releases/download/v0.6.4.1/manuscript-review-studio-v0.6.4.1-windows-x64.zip) · [Release notes and checksums](https://github.com/lensback940701/manuscript-review-studio/releases/tag/v0.6.4.1). Extract it fully, then double-click `release/ManuscriptRevisionClosure.exe`. No Python installation is required. Runtime compatibility version stays `0.6.4`; use the distribution version, source commit and SHA-256 to identify the build.
 
-- **Want a ready-to-run app?** Check the Releases link above. Once a Windows package is published, open its **Assets**, download the Windows EXE/package, and extract a ZIP before running `ManuscriptRevisionClosure.exe`. If only **Source code (zip/tar.gz)** is present, it is not the Windows application.
+Windows checks passed: 391 unit tests, 23 + 59 adversarial probes, 22 + 61 frozen mock acceptance cases, and standalone EXE GUI startup/shutdown. Live providers, browser rendering and native dialogs were not tested; known Mode 3 limits remain in the [application guide](docs/STANDALONE.md).
+
+- **Want a ready-to-run app?** [Download the complete Windows ZIP](https://github.com/lensback940701/manuscript-review-studio/releases/download/v0.6.4.1/manuscript-review-studio-v0.6.4.1-windows-x64.zip), extract it fully, and run `release/ManuscriptRevisionClosure.exe`. GitHub's **Source code (zip/tar.gz)** is source, not the packaged application.
 - **Want to use the current source now?** Follow [Run from source](docs/STANDALONE.md#run-from-source). GitHub's **Code → Download ZIP** downloads source; it does not create an EXE.
-- **Have a complete distribution ZIP with an EXE?** Extract it fully, open its `release` folder, and double-click `ManuscriptRevisionClosure.exe`. The original bundle's EXE predates the current fixes; new source files beside it do not update the embedded app.
+- **Have a complete distribution ZIP with an EXE?** Extract it fully, open its `release` folder, and double-click `ManuscriptRevisionClosure.exe`. Historical bundles from before v0.6.4.1 may contain an EXE that predates these fixes; new source files beside it do not update the embedded app.
 - **Already have a Windows build?** Set your provider API key in your Windows user environment, reopen the app, and follow the five steps below. Check the build's source revision and checksum before assuming it includes a fix.
 
 ### First review in five steps

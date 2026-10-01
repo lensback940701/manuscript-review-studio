@@ -10,11 +10,13 @@
 
 **[Windows EXE / Releases 下载入口](https://github.com/lensback940701/manuscript-review-studio/releases)** · **[完整使用指南](docs/STANDALONE.zh-CN.md)**
 
-> **当前 Windows 分发包：**请在 Release 的 **Assets（资源）** 中查找 `manuscript-review-studio-v0.6.4.1-windows-x64.zip`。只有源码测试、单独复制 EXE 的启动检查与冻结版模拟验收通过后，工作流才会发布该包。运行时兼容版本仍为 `0.6.4`，应以随包源码提交和 SHA-256 收据识别实际构建。
+> **v0.6.4.1 已发布（2026-10-01）：**[下载完整 Windows x64 ZIP](https://github.com/lensback940701/manuscript-review-studio/releases/download/v0.6.4.1/manuscript-review-studio-v0.6.4.1-windows-x64.zip) · [发布记录与校验文件](https://github.com/lensback940701/manuscript-review-studio/releases/tag/v0.6.4.1)。完整解压后双击 `release/ManuscriptRevisionClosure.exe`，无需安装 Python。运行时兼容版本仍为 `0.6.4`，以分发版本、源码提交和 SHA-256 识别实际构建。
 
-- **只想下载即用？** 打开上方 Releases。发布 Windows 包后，在该版本的 **Assets（资源）** 中下载 EXE 或 Windows 压缩包；如果是 ZIP，请先解压，再运行 `ManuscriptRevisionClosure.exe`。只有 **Source code (zip/tar.gz)** 时，下载到的是源码，不是 Windows 程序。
+Windows 验证通过：391 项单元测试、23 + 59 项对抗探针、22 + 61 项冻结版模拟验收，以及独立 EXE 的本地 GUI 启动/关闭检查。未实测真实模型服务、浏览器渲染或原生对话框；模式 3 已知限制仍见[使用指南](docs/STANDALONE.zh-CN.md)。
+
+- **只想下载即用？** [直接下载完整 Windows ZIP](https://github.com/lensback940701/manuscript-review-studio/releases/download/v0.6.4.1/manuscript-review-studio-v0.6.4.1-windows-x64.zip)，先完整解压，再运行 `release/ManuscriptRevisionClosure.exe`。GitHub 的 **Source code (zip/tar.gz)** 是源码，不是打包程序。
 - **现在就要运行最新源码？** 按[从源码运行](docs/STANDALONE.zh-CN.md#从源码运行)操作。GitHub 的 **Code → Download ZIP** 只下载源码，不会生成 EXE。
-- **完整分发 ZIP 里已经有 EXE？** 先完整解压，打开其中的 `release` 文件夹，再双击 `ManuscriptRevisionClosure.exe`。原包内的旧 EXE 早于当前修复；放在旁边的新源码不会更新它内嵌的程序。
+- **完整分发 ZIP 里已经有 EXE？** 先完整解压，打开其中的 `release` 文件夹，再双击 `ManuscriptRevisionClosure.exe`。早于 v0.6.4.1 的历史分发包可能含有尚未纳入这些修复的旧 EXE；放在旁边的新源码不会更新它内嵌的程序。
 - **已经有 Windows 构建版？** 先在 Windows 用户环境变量中配置所选提供商的 API key，重新打开程序，再按下面五步操作。判断是否含修复时应核对构建对应的源码提交与校验值。
 
 ### 第一次审阅，只需五步

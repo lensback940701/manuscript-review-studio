@@ -1,0 +1,55 @@
+name: Correct v0.6.4.1 release description
+
+on:
+  push:
+    branches: [release/notes-v0.6.4.1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-notes-v0.6.4.1
+  cancel-in-progress: false
+
+jobs:
+  correct-description:
+    if: >-
+      github.repository == 'lensback940701/manuscript-review-studio' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/release/notes-v0.6.4.1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: docs/RELEASE_NOTES_v0.6.4.1.md
+          sparse-checkout-cone-mode: false
+      - name: Correct description without touching any asset or tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$GH_REPO/releases/tags/v0.6.4.1" > before.json
+          test "$(gh api "repos/$GH_REPO/commits/v0.6.4.1" --jq '.sha')" = afb85398ac0647d5b21cfc1a2626b5f5c54cd3ef
+          python3 - <<'PY'
+          import json
+          release = json.load(open('before.json'))
+          assert release['id'] == 400581508 and not release['draft']
+          assert release['target_commitish'] == 'afb85398ac0647d5b21cfc1a2626b5f5c54cd3ef'
+          assert len(release['assets']) == 7
+          PY
+          gh release edit v0.6.4.1 --notes-file docs/RELEASE_NOTES_v0.6.4.1.md
+          gh api "repos/$GH_REPO/releases/tags/v0.6.4.1" > after.json
+          python3 - <<'PY'
+          import json, pathlib
+          before = json.load(open('before.json'))
+          after = json.load(open('after.json'))
+          identity = lambda r: sorted((a['id'], a['name'], a['size'], a.get('digest')) for a in r['assets'])
+          assert identity(before) == identity(after), 'Release assets changed'
+          assert before['id'] == after['id'] and before['target_commitish'] == after['target_commitish']
+          assert after['body'].replace('\r\n', '\n').strip() == pathlib.Path('docs/RELEASE_NOTES_v0.6.4.1.md').read_text().strip()
+          print('Release description corrected; all seven asset identities unchanged.')
+          PY
+          test "$(gh api "repos/$GH_REPO/commits/v0.6.4.1" --jq '.sha')" = afb85398ac0647d5b21cfc1a2626b5f5c54cd3ef

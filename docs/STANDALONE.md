@@ -8,12 +8,14 @@ This guide describes the current standalone source (`0.6.4`, with Skill contract
 
 **[Windows downloads / GitHub Releases](https://github.com/lensback940701/manuscript-review-studio/releases)**
 
-**Current Windows package:** `manuscript-review-studio-v0.6.4.1-windows-x64.zip`, when present in Release **Assets**, contains the verified current-code EXE and both language guides. Runtime compatibility version stays `0.6.4`; distribution revision `v0.6.4.1` and fresh source-commit/SHA-256 receipts distinguish this rebuild from older binaries. An old EXE is not updated by placing new `.py` files beside it. See [Windows release verification](WINDOWS_RELEASE.md) for the exact checks and limitations.
+**v0.6.4.1 released (2026-10-01):** [Download the complete Windows x64 ZIP](https://github.com/lensback940701/manuscript-review-studio/releases/download/v0.6.4.1/manuscript-review-studio-v0.6.4.1-windows-x64.zip) · [Release notes and checksums](https://github.com/lensback940701/manuscript-review-studio/releases/tag/v0.6.4.1). Extract it fully, then double-click `release/ManuscriptRevisionClosure.exe`. No Python installation is required. Runtime compatibility version stays `0.6.4`; use the distribution version, source commit and SHA-256 to identify the build.
+
+**Verified on Windows:** 391 unit tests, 23 + 59 adversarial probes, 22 retained frozen acceptance cases and 61 multimode frozen cases passed. Checks also covered the copied standalone EXE in an otherwise empty directory, redirected Chinese output, local GUI status and safe shutdown. Model traffic used loopback mocks; live providers, browser rendering and native dialogs were not tested. Known Mode 3 limitations remain. [Verification scope](WINDOWS_RELEASE.md) · [Release-note correction](https://github.com/lensback940701/manuscript-review-studio/releases/tag/v0.6.4.1).
 
 | What you have | Where to start |
 | --- | --- |
 | A complete distribution ZIP that actually includes `release/ManuscriptRevisionClosure.exe` | Extract the entire ZIP, open the extracted `release` folder, then double-click `ManuscriptRevisionClosure.exe`. Do not run it from inside the ZIP viewer. |
-| A published Windows EXE/package in a Release's **Assets** | Read that release's build notes and checksum, download it, extract if needed, and open the included EXE. This route becomes available only when such an asset is published. |
+| A published Windows EXE/package in a Release's **Assets** | Read that release's build notes and checksum, download it, extract if needed, and open the included EXE. The v0.6.4.1 release provides these assets. |
 | GitHub **Code → Download ZIP** or **Source code (zip/tar.gz)** | This is source, not a packaged application. Follow [Run from source](#run-from-source) or [Build on Windows](#build-on-windows). |
 
 A Windows one-file build is intended to carry its Python runtime and document-reading dependencies. You still need a compatible Windows x64 machine, a browser, provider network access, and your own API key. The presence of an EXE or an old build receipt is not proof that it was built from current source. Keep release notes and checksums with the distribution; do not mix an old EXE with newer source and assume they match.
@@ -78,7 +80,7 @@ These are actual judgment calibrations. They do not change the structured-output
 
 The journal standard is intentionally demanding: disciplinary theory must be a substantive pillar rather than decorative framing; methodological and empirical detail is compared with the supplied samples; an internally coherent paper must not receive STOP merely to avoid further revision when substantive journal-level gaps remain.
 
-**Current scope and limitation:** sample files are read locally, but the core review receives only excerpts from the first eight filename-sorted papers, up to 400 characters each. It does not perform full-text review of every sample or independently verify publication status. A failed sample ingestion can currently fall back to review without the benchmark profile. Resolve any precheck/file error before proceeding; do not interpret a run with an invalid sample folder as a verified journal comparison. Adding many papers does not guarantee all their contents are assessed.
+**Current scope and limitation:** sample files are read locally, but the core review receives only excerpts from the first eight filename-sorted papers, up to 400 characters each. It does not perform full-text review of every sample or independently verify publication status. There is no separate stage that extracts a journal rubric from the sample papers. A failed sample ingestion can currently fall back to review without the benchmark profile. Resolve any precheck/file error before proceeding; do not interpret a run with an invalid sample folder as a verified journal comparison. Adding many papers does not guarantee all their contents are assessed.
 
 ## Thinking settings
 
