@@ -1,0 +1,128 @@
+name: Windows verified release
+
+on:
+  push:
+    branches: [release/windows-v0.6.4.1]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified v0.6.4.1 Windows release
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-v0.6.4.1
+  cancel-in-progress: false
+
+jobs:
+  build-test:
+    if: github.repository == 'lensback940701/manuscript-review-studio'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+      PYTHONOPTIMIZE: '0'
+      PYTHONIOENCODING: utf-8
+      MRC_RELEASE_VERSION: v0.6.4.1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install pinned build dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
+          & .venv/Scripts/python.exe -m pip install --disable-pip-version-check -r requirements-build.txt
+          if ($LASTEXITCODE -ne 0) { throw 'dependency installation failed' }
+      - name: Source unit and adversarial contracts
+        shell: pwsh
+        run: |
+          & .venv/Scripts/python.exe -B scripts/windows_release.py source-tests
+          if ($LASTEXITCODE -ne 0) { throw 'source tests failed' }
+      - name: Build fresh Windows x64 executable
+        shell: pwsh
+        run: ./build_exe.ps1
+      - name: Validate copied executable and package clean distribution
+        shell: pwsh
+        run: |
+          & .venv/Scripts/python.exe -B scripts/windows_release.py validate-package
+          if ($LASTEXITCODE -ne 0) { throw 'frozen validation or packaging failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-windows-v0.6.4.1
+          path: .build/publish/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: build-test
+    if: >-
+      github.repository == 'lensback940701/manuscript-review-studio' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/release/windows-v0.6.4.1') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish &&
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/windows-v0.6.4.1')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-windows-v0.6.4.1
+          path: publish
+      - name: Verify immutable asset identities
+        working-directory: publish
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          sha256sum -c SHA256SUMS
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, zipfile
+          root = pathlib.Path('.')
+          build = json.loads((root / 'BUILD_RECEIPT.json').read_text())
+          validation = json.loads((root / 'VALIDATION_RECEIPT.json').read_text())
+          digest = hashlib.sha256((root / 'ManuscriptRevisionClosure.exe').read_bytes()).hexdigest()
+          assert build['source_commit'] == validation['source_commit'] == os.environ['SOURCE_COMMIT']
+          assert build['sha256'].lower() == validation['exe_sha256'] == digest
+          assert validation['status'] == 'PASS_WINDOWS_FROZEN_AND_SOURCE_VALIDATION'
+          with zipfile.ZipFile('manuscript-review-studio-v0.6.4.1-windows-x64.zip') as archive:
+              assert hashlib.sha256(archive.read('release/ManuscriptRevisionClosure.exe')).hexdigest() == digest
+              assert archive.read('release/BUILD_RECEIPT.json') == (root / 'BUILD_RECEIPT.json').read_bytes()
+              assert archive.read('release/VALIDATION_RECEIPT.json') == (root / 'VALIDATION_RECEIPT.json').read_bytes()
+          PY
+      - name: Publish new release without replacing existing assets
+        working-directory: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          tag_count=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v0.6.4.1" \
+            --jq 'map(select(.ref == "refs/tags/v0.6.4.1")) | length')
+          if [ "$tag_count" = 0 ]; then
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref='refs/tags/v0.6.4.1' -f sha="$SOURCE_COMMIT" > /dev/null
+          fi
+          tag_commit=$(gh api "repos/$GH_REPO/commits/v0.6.4.1" --jq '.sha')
+          test "$tag_commit" = "$SOURCE_COMMIT"
+          gh release create v0.6.4.1 \
+            --verify-tag \
+            --target "$SOURCE_COMMIT" \
+            --title 'v0.6.4.1 — verified Windows multimode build' \
+            --notes-file RELEASE_NOTES.md \
+            manuscript-review-studio-v0.6.4.1-windows-x64.zip \
+            ManuscriptRevisionClosure.exe ManuscriptRevisionClosure.exe.sha256 \
+            BUILD_RECEIPT.json VALIDATION_RECEIPT.json SHA256SUMS RELEASE_NOTES.md
+          test "$(gh api "repos/$GH_REPO/commits/v0.6.4.1" --jq '.sha')" = "$SOURCE_COMMIT"

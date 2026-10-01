@@ -10,7 +10,7 @@
 
 **[Windows EXE / Releases 下载入口](https://github.com/lensback940701/manuscript-review-studio/releases)** · **[完整使用指南](docs/STANDALONE.zh-CN.md)**
 
-> **2026-10-01 核实的发布状态：**本仓库尚无已发布的 GitHub Release，也没有可下载的 EXE 附件。当前修复已提供源码；旧的本地构建 EXE 不会自动包含后续源码修复，即使两者都显示 `0.6.4`。
+> **当前 Windows 分发包：**请在 Release 的 **Assets（资源）** 中查找 `manuscript-review-studio-v0.6.4.1-windows-x64.zip`。只有源码测试、单独复制 EXE 的启动检查与冻结版模拟验收通过后，工作流才会发布该包。运行时兼容版本仍为 `0.6.4`，应以随包源码提交和 SHA-256 收据识别实际构建。
 
 - **只想下载即用？** 打开上方 Releases。发布 Windows 包后，在该版本的 **Assets（资源）** 中下载 EXE 或 Windows 压缩包；如果是 ZIP，请先解压，再运行 `ManuscriptRevisionClosure.exe`。只有 **Source code (zip/tar.gz)** 时，下载到的是源码，不是 Windows 程序。
 - **现在就要运行最新源码？** 按[从源码运行](docs/STANDALONE.zh-CN.md#从源码运行)操作。GitHub 的 **Code → Download ZIP** 只下载源码，不会生成 EXE。

@@ -24,8 +24,11 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE = ROOT / "release" / "ManuscriptRevisionClosure.exe"
-BUILD_RECEIPT = json.loads((ROOT / "release" / "BUILD_RECEIPT.json").read_text(encoding="utf-8"))
+EXE = Path(os.environ.get("MRC_FROZEN_EXE", ROOT / "release" / "ManuscriptRevisionClosure.exe")).expanduser().resolve()
+BUILD_RECEIPT_PATH = Path(
+    os.environ.get("MRC_BUILD_RECEIPT", ROOT / "release" / "BUILD_RECEIPT.json")
+).expanduser().resolve()
+BUILD_RECEIPT = json.loads(BUILD_RECEIPT_PATH.read_text(encoding="utf-8"))
 
 COVERAGE_CONTRACT_VERSION = "mrc-whole-manuscript-coverage-3.0"
 COVERAGE_DIMENSIONS = (
@@ -404,23 +407,30 @@ class MockProvider:
 
 def provider_env(provider: str, port: int) -> dict[str, str]:
     env = os.environ.copy()
-    for key in (
-        "DEEPSEEK_API_KEY",
-        "DEEPSEEK_BASE_URL",
-        "MOONSHOT_API_KEY",
-        "KIMI_API_KEY",
-        "KIMI_BASE_URL",
-        "GEMINI_API_KEY",
-        "GEMINI_BASE_URL",
-    ):
-        env.pop(key, None)
+    # Never inherit real provider credentials, provider endpoints, proxy bypasses,
+    # or a source-tree Python import path into the isolated frozen process.
+    blocked_names = {"PYTHONPATH", "PYTHONHOME"}
+    provider_prefixes = ("DEEPSEEK_", "MOONSHOT_", "KIMI_", "GEMINI_", "OPENAI_", "GOOGLE_", "ANTHROPIC_")
+    for key in list(env):
+        upper = key.upper()
+        if upper in blocked_names or upper.endswith("_PROXY") or upper.startswith(provider_prefixes):
+            env.pop(key, None)
     env.update(
         {
             "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "DEEPSEEK_BASE_URL": "http://127.0.0.1:9",
+            "KIMI_BASE_URL": "http://127.0.0.1:9",
+            "GEMINI_BASE_URL": "http://127.0.0.1:9",
             "HTTP_PROXY": "http://127.0.0.1:9",
             "HTTPS_PROXY": "http://127.0.0.1:9",
             "ALL_PROXY": "http://127.0.0.1:9",
             "NO_PROXY": "127.0.0.1,localhost",
+            "http_proxy": "http://127.0.0.1:9",
+            "https_proxy": "http://127.0.0.1:9",
+            "all_proxy": "http://127.0.0.1:9",
+            "no_proxy": "127.0.0.1,localhost",
         }
     )
     base = f"http://127.0.0.1:{port}"
@@ -491,6 +501,8 @@ def run_cli_case(
             env=provider_env(provider, mock.port),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             timeout=60,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -508,16 +520,8 @@ def run_intake_only_case(name: str, manuscript_text: str) -> dict[str, Any]:
         manuscript = temp / "synthetic.md"
         output = temp / "result.json"
         manuscript.write_text(manuscript_text, encoding="utf-8")
-        env = os.environ.copy()
-        for key in (
-            "DEEPSEEK_API_KEY",
-            "MOONSHOT_API_KEY",
-            "KIMI_API_KEY",
-            "GEMINI_API_KEY",
-        ):
-            env.pop(key, None)
+        env = provider_env("gemini", 9)
         env["GEMINI_API_KEY"] = "mock-consent-denied-no-network"
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
         completed = subprocess.run(
             [
                 str(EXE),
@@ -535,6 +539,8 @@ def run_intake_only_case(name: str, manuscript_text: str) -> dict[str, Any]:
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             timeout=30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -575,6 +581,8 @@ def run_gui_case(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         try:
@@ -634,6 +642,9 @@ def run_gui_case(
 
 def main() -> None:
     assert EXE.is_file()
+    exe_sha256 = hashlib.sha256(EXE.read_bytes()).hexdigest()
+    assert str(BUILD_RECEIPT["sha256"]).lower() == exe_sha256
+    assert BUILD_RECEIPT["bytes"] == EXE.stat().st_size
     assert BUILD_RECEIPT["standalone_version"] == "0.6.4"
     assert BUILD_RECEIPT["intake_contract_version"] == "mrc-local-technical-preflight-1.0"
     assert BUILD_RECEIPT["title_evidence_contract_version"] == "mrc-format-advisory-1.0"
@@ -654,7 +665,7 @@ def main() -> None:
     assert len(BUILD_RECEIPT["candidate_binding_contract_sha256"]) == 64
     assert BUILD_RECEIPT["affirmative_stop_contract_version"] == "mrc-affirmative-stop-gate-1.0"
     assert len(BUILD_RECEIPT["affirmative_stop_contract_sha256"]) == 64
-    summary: dict[str, Any] = {"frozen_exe_sha256": hashlib.sha256(EXE.read_bytes()).hexdigest(), "cases": {}}
+    summary: dict[str, Any] = {"frozen_exe_sha256": exe_sha256, "cases": {}}
 
     kimi, kimi_requests = run_gui_case(
         "kimi_positive_gui", "kimi", "kimi-k2.6", interpretation=True

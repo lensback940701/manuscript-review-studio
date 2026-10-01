@@ -12,7 +12,15 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'Missing .venv. Create it with: python -m venv .venv'
 }
 
+# Invalidate historical evidence before any new build attempt.
 New-Item -ItemType Directory -Force -Path $Release, $Work, $Spec | Out-Null
+foreach ($Name in @('VALIDATION_RECEIPT.json', 'BUILD_RECEIPT.json', 'ManuscriptRevisionClosure.exe.sha256', 'ManuscriptRevisionClosure.exe')) {
+    $OldAsset = Join-Path $Release $Name
+    if (Test-Path -LiteralPath $OldAsset) { Remove-Item -LiteralPath $OldAsset -Force }
+}
+$BuildMetadataJson = & $Python -B (Join-Path $ProjectRoot 'scripts\windows_release.py') metadata
+if ($LASTEXITCODE -ne 0) { throw 'Build source/dependency identity verification failed' }
+$BuildMetadata = $BuildMetadataJson | ConvertFrom-Json
 
 & $Python -B -m PyInstaller `
     --noconfirm `
@@ -91,15 +99,25 @@ $Receipt = [ordered]@{
     empty_candidate_adjudication_schema_sha256 = $Contracts.empty_candidate_adjudication_schema_sha256
     provider_capability_registry_sha256 = $Contracts.provider_capability_registry_sha256
     interpretation_agent_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $ProjectRoot 'standalone\AGENT.md')).Hash
-    pyinstaller = '6.22.2'
-    pypdf = '6.16.2'
+    source_commit = $BuildMetadata.source_commit
+    repository = $BuildMetadata.repository
+    release_version = $BuildMetadata.release_version
+    built_at_utc = $BuildMetadata.built_at_utc
+    python = $BuildMetadata.python
+    platform = $BuildMetadata.platform
+    pyinstaller = $BuildMetadata.pyinstaller
+    pypdf = $BuildMetadata.pypdf
+    installed_build_distributions = $BuildMetadata.installed_build_distributions
+    requirements_build_sha256 = $BuildMetadata.requirements_build_sha256
+    workflow_run_id = $BuildMetadata.workflow_run_id
+    workflow_run_attempt = $BuildMetadata.workflow_run_attempt
     skill_donor_commit = 'fd30bf0daf0e8557b315491c72479b1b2598c22f'
     codex_reference_commit = 'd5caceccb1ee5bf94c081b995575ce4860e0912b'
 }
-$ReceiptJson = $Receipt | ConvertTo-Json
+$ReceiptJson = $Receipt | ConvertTo-Json -Depth 10
 $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Join-Path $Release 'BUILD_RECEIPT.json'), $ReceiptJson, $Utf8NoBomEncoding)
-$Hash.Hash | Set-Content -LiteralPath (Join-Path $Release 'ManuscriptRevisionClosure.exe.sha256') -Encoding ascii
+"$($Hash.Hash.ToLowerInvariant())  ManuscriptRevisionClosure.exe" | Set-Content -LiteralPath (Join-Path $Release 'ManuscriptRevisionClosure.exe.sha256') -Encoding ascii
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\STANDALONE.zh-CN.md') -Destination $Release -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\PORTABILITY.zh-CN.md') -Destination $Release -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\HARNESS_EQUIVALENCE_AUDIT.zh-CN.md') -Destination (Join-Path $Release 'HARNESS_AUDIT.zh-CN.md') -Force

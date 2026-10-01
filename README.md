@@ -10,7 +10,7 @@ The application runs locally and connects directly to your chosen model provider
 
 **[Windows EXE / Releases](https://github.com/lensback940701/manuscript-review-studio/releases)** · **[Complete usage guide](docs/STANDALONE.md)**
 
-> **Availability checked 2026-10-01:** this repository has no published GitHub Release or downloadable EXE asset yet. The current fixes are available as source. An older locally built EXE does not automatically include later source changes, even if both display `0.6.4`.
+> **Current Windows distribution:** look for `manuscript-review-studio-v0.6.4.1-windows-x64.zip` in Release **Assets**. The verified workflow publishes it only after the source tests, copied-EXE smoke checks, and frozen mock acceptance pass. Runtime compatibility version remains `0.6.4`; use the attached source commit and SHA-256 receipts to identify the actual build.
 
 - **Want a ready-to-run app?** Check the Releases link above. Once a Windows package is published, open its **Assets**, download the Windows EXE/package, and extract a ZIP before running `ManuscriptRevisionClosure.exe`. If only **Source code (zip/tar.gz)** is present, it is not the Windows application.
 - **Want to use the current source now?** Follow [Run from source](docs/STANDALONE.md#run-from-source). GitHub's **Code → Download ZIP** downloads source; it does not create an EXE.

@@ -8,7 +8,7 @@
 
 **[Windows 下载 / GitHub Releases](https://github.com/lensback940701/manuscript-review-studio/releases)**
 
-**2026-10-01 核实的状态：**本仓库尚无已发布的 GitHub Release 或 EXE 附件；当前修复在源码中。原完整分发包内的旧 EXE 早于本次模式/响应处理修复；仅显示 `0.6.4` 不能证明它已更新。把新 `.py` 文件放在旧 EXE 旁边也不会更新它内嵌的程序。
+**当前 Windows 分发包：**Release 的 **Assets（资源）** 中如已出现 `manuscript-review-studio-v0.6.4.1-windows-x64.zip`，其中包含由当前源码构建并验收的 EXE 与双语指南。运行时兼容版本仍为 `0.6.4`；分发版本 `v0.6.4.1` 及新的源码提交/SHA-256 收据用于区分旧 EXE。把新 `.py` 文件放在旧 EXE 旁边不会更新程序。具体验证范围与限制见 [Windows 发布验证](WINDOWS_RELEASE.zh-CN.md)。
 
 | 你下载到的内容 | 从哪里开始 |
 | --- | --- |
@@ -173,7 +173,7 @@ python -m venv .venv
 
 ## 在 Windows 构建
 
-在 Windows 上使用 Python 3.11/3.12，从源码根目录执行：
+使用干净的 Git 克隆目录（不是解压的源码 ZIP）、Windows x64、Git 与 Python 3.11/3.12。构建会记录并核对当前提交；自动发布使用 Python 3.12。在克隆目录根部执行：
 
 ```powershell
 python -m venv .venv

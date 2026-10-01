@@ -8,7 +8,7 @@ This guide describes the current standalone source (`0.6.4`, with Skill contract
 
 **[Windows downloads / GitHub Releases](https://github.com/lensback940701/manuscript-review-studio/releases)**
 
-**Availability checked 2026-10-01:** no published GitHub Release or EXE asset is available in this repository. Current fixes are in the source. The original full-bundle EXE predates the current mode/response-handling fixes. The version string `0.6.4` alone does not prove it is updated, and placing new `.py` files beside the old EXE does not replace its embedded program.
+**Current Windows package:** `manuscript-review-studio-v0.6.4.1-windows-x64.zip`, when present in Release **Assets**, contains the verified current-code EXE and both language guides. Runtime compatibility version stays `0.6.4`; distribution revision `v0.6.4.1` and fresh source-commit/SHA-256 receipts distinguish this rebuild from older binaries. An old EXE is not updated by placing new `.py` files beside it. See [Windows release verification](WINDOWS_RELEASE.md) for the exact checks and limitations.
 
 | What you have | Where to start |
 | --- | --- |
@@ -175,7 +175,7 @@ For Mode 2, replace `strict` with `moderate` or `lenient` as needed. For a built
 
 ## Build on Windows
 
-From the source root, using Windows and Python 3.11/3.12:
+Use a clean Git checkout (not an extracted source ZIP), Windows x64, Git, and Python 3.11/3.12. The build records and verifies the checkout commit; the automated release uses Python 3.12. From the checkout root:
 
 ```powershell
 python -m venv .venv
